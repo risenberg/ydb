@@ -111,6 +111,7 @@ private:
     const NColumnShard::TEngineLogsCounters Counters;
     const std::shared_ptr<NDataAccessorControl::IDataAccessorsManager> DataAccessorsManager;
     std::shared_ptr<IStoragesManager> StoragesManager;
+    std::shared_ptr<IIndexAccessStub> IndexAccessStub;
     THashMap<TInternalPathId, std::shared_ptr<TGranuleMeta>> Tables;   // pathId into Granule that equal to Table
     std::shared_ptr<TGranulesStat> Stats;
 
@@ -133,10 +134,12 @@ public:
 
     TGranulesStorage(const NColumnShard::TEngineLogsCounters counters,
         const std::shared_ptr<NDataAccessorControl::IDataAccessorsManager>& dataAccessorsManager,
-        const std::shared_ptr<IStoragesManager>& storagesManager)
+        const std::shared_ptr<IStoragesManager>& storagesManager,
+        const std::shared_ptr<IIndexAccessStub>& indexAccessStub  )
         : Counters(counters)
         , DataAccessorsManager(dataAccessorsManager)
         , StoragesManager(storagesManager)
+        , IndexAccessStub(indexAccessStub)
         , Stats(std::make_shared<TGranulesStat>(Counters)) {
         AFL_VERIFY(DataAccessorsManager);
         AFL_VERIFY(StoragesManager);
@@ -206,6 +209,10 @@ public:
 
     const std::shared_ptr<IStoragesManager>& GetStoragesManager() const {
         return StoragesManager;
+    }
+
+    const std::shared_ptr<IIndexAccessStub>& GetIndexAccessStub() const {
+        return IndexAccessStub;
     }
 
     const NColumnShard::TEngineLogsCounters& GetCounters() const {

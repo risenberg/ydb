@@ -1,4 +1,7 @@
 #pragma once
+
+#include "const.h"
+
 #include <ydb/core/tx/columnshard/engines/storage/indexes/portions/meta.h>
 #include <ydb/core/tx/columnshard/engines/storage/indexes/skip_index/meta.h>
 
@@ -111,10 +114,15 @@ protected:
         *filterProto->MutableDataExtractor() = GetDataExtractor().SerializeToProto();
     }
 
+public:
+    ui32 GetNGrammSize() const override {
+        return NGrammSize;
+    }
+
     bool DoCheckValueImpl(const IBitsStorage& data, const std::optional<ui64> category, const std::shared_ptr<arrow::Scalar>& value,
         const NArrow::NSSA::TIndexCheckOperation& op, const TIndexInfo&) const override;
 
-public:
+
     TIndexMeta() = default;
     TIndexMeta(const ui32 indexId, const TString& indexName, const TString& storageId, const bool inheritPortionIndex, const ui32 columnId,
         const TReadDataExtractorContainer& dataExtractor, const ui32 hashesCount, const ui32 filterSizeBytes, const ui32 nGrammSize,
@@ -131,6 +139,10 @@ public:
 
     virtual TString GetClassName() const override {
         return GetClassNameStatic();
+    }
+
+    bool IsHierarchical() const override {
+        return true;
     }
 };
 
