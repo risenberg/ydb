@@ -1,5 +1,6 @@
 #include <library/cpp/json/json_reader.h>
 #include <library/cpp/json/json_writer.h>
+#include <library/cpp/json/yson/json2yson.h>
 #include <yql/essentials/types/binary_json/read.h>
 #include <yql/essentials/types/binary_json/write.h>
 
@@ -693,6 +694,24 @@ int main(int argc, char* argv[]) {
              << "avg size " << avgSize << " bytes" << Endl;
     }
 
+    // Benchmark YSON serialization.
+    {
+        size_t totalBytes = 0;
+        TSimpleTimer timer;
+        for (int iter = 0; iter < iterations; ++iter) {
+            for (const auto& doc : docs) {
+                TString yson;
+                NJson2Yson::SerializeJsonValueAsYson(doc, yson);
+                totalBytes += yson.size();
+            }
+        }
+        double elapsed = timer.Get().SecondsFloat();
+        size_t avgSize = totalBytes / (docs.size() * iterations);
+        Cerr << "YSON:       " << elapsed << "s, "
+             << (docs.size() * iterations) / elapsed << " docs/s, "
+             << "avg size " << avgSize << " bytes" << Endl;
+    }
+
     Cerr << "\n=== Deserialization ===" << Endl;
 
     // Pre-serialize all documents for deserialization benchmarks.
@@ -700,11 +719,13 @@ int main(int argc, char* argv[]) {
     TVector<TBuffer> binaryJsonSerialized;
     TVector<TBuffer> bsonSerialized;
     TVector<TBuffer> msgpackSerialized;
+    TVector<TString> ysonSerialized;
 
     jsonSerialized.reserve(docs.size());
     binaryJsonSerialized.reserve(docs.size());
     bsonSerialized.reserve(docs.size());
     msgpackSerialized.reserve(docs.size());
+    ysonSerialized.reserve(docs.size());
 
     for (size_t i = 0; i < docs.size(); ++i) {
         jsonSerialized.push_back(NJson::WriteJson(docs[i], false, false, false));
@@ -716,6 +737,9 @@ int main(int argc, char* argv[]) {
         }
         bsonSerialized.push_back(NBson::Serialize(docs[i]));
         msgpackSerialized.push_back(NMsgPack::Serialize(docs[i]));
+        TString yson;
+        NJson2Yson::SerializeJsonValueAsYson(docs[i], yson);
+        ysonSerialized.push_back(std::move(yson));
     }
 
     // Benchmark JSON deserialization.
@@ -779,6 +803,22 @@ int main(int argc, char* argv[]) {
         }
         double elapsed = timer.Get().SecondsFloat();
         Cerr << "MsgPack:    " << elapsed << "s, "
+             << count / elapsed << " docs/s" << Endl;
+    }
+
+    // Benchmark YSON deserialization.
+    {
+        size_t count = 0;
+        TSimpleTimer timer;
+        for (int iter = 0; iter < iterations; ++iter) {
+            for (const auto& yson : ysonSerialized) {
+                NJson::TJsonValue val;
+                NJson2Yson::DeserializeYsonAsJsonValue(yson, &val);
+                ++count;
+            }
+        }
+        double elapsed = timer.Get().SecondsFloat();
+        Cerr << "YSON:       " << elapsed << "s, "
              << count / elapsed << " docs/s" << Endl;
     }
 

@@ -12,6 +12,7 @@ SRCS(
 
 PEERDIR(
     library/cpp/json
+    library/cpp/json/yson
     yql/essentials/public/udf/service/exception_policy
     yql/essentials/sql/pg_dummy
     yql/essentials/types/binary_json
