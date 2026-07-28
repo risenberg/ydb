@@ -888,6 +888,38 @@ Y_UNIT_TEST_SUITE(KqpSinkMvcc) {
         tester.Execute();
     }
 
+    class TMultiSinksCompacted: public TTableDataModificationTester {
+    protected:
+        void DoExecute() override {
+            auto client = Kikimr->GetQueryClient();
+
+            auto session1 = client.GetSession().GetValueSync().GetSession();
+
+            {
+                auto result = session1.ExecuteQuery(Q_(R"(
+                    UPSERT INTO `/Root/KV` (Key, Value) VALUES (1u, "1");
+                    UPSERT INTO `/Root/KV` (Key, Value) VALUES (1u, "2");
+                )"), TTxControl::BeginTx(TTxSettings::SerializableRW()).CommitTx()).ExtractValueSync();
+                UNIT_ASSERT_VALUES_EQUAL_C(result.GetStatus(), EStatus::SUCCESS, result.GetIssues().ToString());
+            }
+            // wait for general compaction of the inserted portions
+            Sleep(TDuration::Seconds(5));
+            {
+                auto result = session1.ExecuteQuery(Q_(R"(
+                    SELECT Value FROM `/Root/KV` WHERE Key = 1u;
+                )"), TTxControl::BeginTx(TTxSettings::SerializableRW()).CommitTx()).ExtractValueSync();
+                UNIT_ASSERT_VALUES_EQUAL_C(result.GetStatus(), EStatus::SUCCESS, result.GetIssues().ToString());
+                CompareYson(R"([[["2"]]])", FormatResultSetYson(result.GetResultSet(0)));
+            }
+        }
+    };
+
+    Y_UNIT_TEST(OlapMultiSinksAfterCompaction) {
+        TMultiSinksCompacted tester;
+        tester.SetIsOlap(true);
+        tester.Execute();
+    }
+
     class TInsertConflictingKey: public TTableDataModificationTester {
         YDB_ACCESSOR(bool, CommitOnInsert, false);
     protected:
