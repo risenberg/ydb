@@ -5,6 +5,7 @@
 #include "stats.h"
 
 #include <ydb/core/formats/arrow/accessor/abstract/accessor.h>
+#include <ydb/core/formats/arrow/accessor/dictionary/constructor.h>
 #include <ydb/core/formats/arrow/arrow_helpers.h>
 
 #include <contrib/libs/apache/arrow/cpp/src/arrow/array/builder_base.h>
@@ -31,15 +32,23 @@ private:
     YDB_READONLY(ui32, DataSize, 0);
     std::shared_ptr<IChunkedArray> Accessor;
 
+    // Dictionary plan computed once by TryDictionaryEncode and consumed by BuildDictionaryAccessor,
+    // avoiding a re-deduplication during dictionary construction.
+    std::optional<NDictionary::TConstructor::TDictionaryPlan> DictionaryPlan;
+
 public:
     const std::shared_ptr<IChunkedArray>& GetAccessorVerified() const {
         AFL_VERIFY(!!Accessor);
         return Accessor;
     }
 
+    // Deduplicate the column's values, keeping the result iff it qualifies for dictionary encoding
+    // (fewer than `tooManyUnique` distinct values). On success stores the plan for BuildDictionaryAccessor.
+    bool TryDictionaryEncode(const ui32 recordsCount, const ui32 tooManyUnique, const EValueType valueType);
+
     void BuildSparsedAccessor(const ui32 recordsCount, const EValueType valueType);
     void BuildPlainAccessor(const ui32 recordsCount, const EValueType valueType);
-    void BuildDictionaryAccessor(const ui32 recordsCount, const EValueType valueType);
+    void BuildDictionaryAccessor();
 
     TColumnElements(const TStringBuf key)
         : KeyName(key) {
@@ -179,23 +188,17 @@ public:
         auto builder = TDictStats::MakeBuilder();
         for (auto&& i : keys) {
             const ui32 presentCount = i->GetRecordIndexes().size();
-            // All stored values count toward the distinct set, nulls included (a null is one value).
-            const auto enumerateValues = [i](const auto& consumer) {
-                for (const auto& v : i->GetValues()) {
-                    if (!consumer(TStringBuf(v.data(), v.size()))) {
-                        break;
-                    }
-                }
-            };
             // Native scalar storage applies only to separated columns, the Others store is always BinaryJson.
             EValueType valueType = EValueType::BinaryJson;
             if (separateColumns && settings.GetEnableNativeColumnsResolved()) {
                 valueType = DetectValueTypeForArray(i->GetValues());
             }
             auto accessorType = settings.IsSparsed(presentCount, recordsCount) ? IChunkedArray::EType::SparsedArray : IChunkedArray::EType::Array;
-            if (separateColumns && CanBeDictionaryEncoded(valueType) &&
-                       settings.IsDictionary(presentCount, enumerateValues)) {
-                accessorType = IChunkedArray::EType::Dictionary;
+            if (separateColumns && CanBeDictionaryEncoded(valueType)) {
+                if (const std::optional<ui32> tooManyUnique = settings.GetDictionaryUniqueThreshold(presentCount);
+                    tooManyUnique && i->TryDictionaryEncode(recordsCount, *tooManyUnique, valueType)) {
+                    accessorType = IChunkedArray::EType::Dictionary;
+                }
             }
             builder.Add(i->GetKeyName(), presentCount, i->GetDataSize(), accessorType, valueType);
         }

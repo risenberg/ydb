@@ -12,6 +12,11 @@
 #include <contrib/libs/apache/arrow/cpp/src/arrow/record_batch.h>
 #include <contrib/libs/apache/arrow/cpp/src/arrow/table.h>
 
+#include <library/cpp/containers/absl/flat_hash_map.h>
+
+#include <algorithm>
+#include <numeric>
+
 namespace NKikimr::NArrow::NAccessor::NDictionary {
 
 TConclusion<std::shared_ptr<IChunkedArray>> TConstructor::DoDeserializeFromString(
@@ -126,62 +131,92 @@ TConclusion<std::shared_ptr<IChunkedArray>> TConstructor::DoConstruct(
         return TConclusionStatus::Fail("dictionary accessor cannot convert types for transfer: " + originalArray->GetDataType()->ToString() +
                                        " to " + externalInfo.GetColumnType()->ToString());
     }
-    auto schema = std::make_shared<arrow::Schema>(arrow::FieldVector({ std::make_shared<arrow::Field>("val", externalInfo.GetColumnType()) }));
     auto chunked = originalArray->GetChunkedArray();
     AFL_VERIFY(chunked->type()->id() == originalArray->GetDataType()->id());
-    std::unique_ptr<arrow::ArrayBuilder> builderRecords;
-    std::unique_ptr<arrow::ArrayBuilder> builderVariants = NArrow::MakeBuilder(originalArray->GetDataType());
-    std::vector<i32> records;
-    std::vector<i32> remap;
+    auto plan = PlanFromChunked(chunked, Max<ui32>());
+    AFL_VERIFY(plan);
+    AFL_VERIFY(plan->Indexes.size() == originalArray->GetRecordsCount());
+    return BuildFromPlan(*plan);
+}
+
+std::optional<TConstructor::TDictionaryPlan> TConstructor::PlanFromChunked(
+    const std::shared_ptr<arrow::ChunkedArray>& chunked, const ui32 tooManyUnique) {
+    std::unique_ptr<arrow::ArrayBuilder> builderVariants = NArrow::MakeBuilder(chunked->type());
+    std::vector<i32> indexes;
+    bool hasNulls = false;
+    bool exceeded = false;
     AFL_VERIFY(SwitchType(chunked->type()->id(), [&](const auto type) {
         if constexpr (type.IsAppropriate) {
-            bool hasNulls = false;
-            std::map<typename decltype(type)::ValueType, ui32> indexByValue;
+            using TValue = typename decltype(type)::ValueType;
+            auto hasher = [type](const TValue& v) { return type.CalcHash(v); };
+            absl::flat_hash_map<TValue, ui32, decltype(hasher)> indexByValue(0, hasher);
+            indexes.reserve(chunked->length());
+            auto* builder = type.CastBuilder(builderVariants.get());
             for (ui32 chunk = 0; chunk < (ui32)chunked->num_chunks(); ++chunk) {
                 auto chunkArr = chunked->chunk(chunk);
                 auto typedArray = type.CastArray(chunkArr);
                 for (ui32 pos = 0; pos < typedArray->length(); ++pos) {
                     if (typedArray->IsNull(pos)) {
-                        records.emplace_back(-1);
+                        indexes.emplace_back(-1);
                         hasNulls = true;
                         continue;
                     }
                     auto sv = type.GetValue(*typedArray, pos);
-                    auto it = indexByValue.find(sv);
-                    if (it == indexByValue.end()) {
-                        it = indexByValue.emplace(sv, indexByValue.size()).first;
+                    auto [it, inserted] = indexByValue.try_emplace(sv, indexByValue.size());
+                    if (inserted) {
+                        if (indexByValue.size() >= tooManyUnique) {
+                            exceeded = true;
+                            return true;
+                        }
+                        TStatusValidator::Validate(builder->Append(sv));
                     }
-                    records.emplace_back(it->second);
+                    indexes.emplace_back(it->second);
                 }
-            }
-            {
-                auto* builder = type.CastBuilder(builderVariants.get());
-                for (auto&& i : indexByValue) {
-                    TStatusValidator::Validate(builder->Append(i.first));
-                }
-                if (hasNulls) {
-                    TStatusValidator::Validate(builder->AppendNull());
-                }
-            }
-            const ui32 variantsCount = indexByValue.size() + (hasNulls ? 1 : 0);
-            auto recordsType = GetTypeByVariantsCount(variantsCount);
-            builderRecords = NArrow::MakeBuilder(recordsType);
-            remap.resize(indexByValue.size(), -1);
-            ui32 idx = 0;
-            for (auto&& i : indexByValue) {
-                remap[i.second] = idx++;
             }
             return true;
         }
-        AFL_VERIFY(false)("type", originalArray->GetDataType()->ToString());
+        AFL_VERIFY(false)("type", chunked->type()->ToString());
         return false;
     }));
-    AFL_VERIFY(records.size() == originalArray->GetRecordsCount());
-    AFL_VERIFY(SwitchType(builderRecords->type()->id(), [&](const auto type) {
+    if (exceeded) {
+        return std::nullopt;
+    }
+    return TDictionaryPlan{NArrow::FinishBuilder(std::move(builderVariants)), std::move(indexes), hasNulls};
+}
+
+std::shared_ptr<IChunkedArray> TConstructor::BuildFromPlan(const TDictionaryPlan& plan) {
+    const auto& distinctValues = plan.DistinctValues;
+    const bool hasNulls = plan.HasNulls;
+    std::unique_ptr<arrow::ArrayBuilder> builderVariants = NArrow::MakeBuilder(distinctValues->type());
+    // remap[i] is the sorted position of the value whose first-seen index is i.
+    std::vector<i32> remap(distinctValues->length(), -1);
+    AFL_VERIFY(SwitchType(distinctValues->type_id(), [&](const auto type) {
+        if constexpr (type.IsAppropriate) {
+            const auto* arr = type.CastArray(distinctValues.get());
+            std::vector<ui32> order(arr->length());
+            std::iota(order.begin(), order.end(), 0u);
+            std::sort(order.begin(), order.end(), [&](const ui32 a, const ui32 b) { return type.GetValue(*arr, a) < type.GetValue(*arr, b); });
+            auto* builder = type.CastBuilder(builderVariants.get());
+            for (ui32 sortedPos = 0; sortedPos < order.size(); ++sortedPos) {
+                remap[order[sortedPos]] = sortedPos;
+                TStatusValidator::Validate(builder->Append(type.GetValue(*arr, order[sortedPos])));
+            }
+            if (hasNulls) {
+                TStatusValidator::Validate(builder->AppendNull());
+            }
+            return true;
+        }
+        AFL_VERIFY(false)("type", distinctValues->type()->ToString());
+        return false;
+    }));
+    const ui32 variantsCount = distinctValues->length() + (hasNulls ? 1 : 0);
+    auto recordsType = GetTypeByVariantsCount(variantsCount);
+    std::unique_ptr<arrow::ArrayBuilder> builderRecords = NArrow::MakeBuilder(recordsType);
+    AFL_VERIFY(SwitchType(recordsType->id(), [&](const auto type) {
         auto* builder = type.CastBuilder(builderRecords.get());
         if constexpr (type.IsIndexType()) {
             using CType = typename decltype(type)::ValueType;
-            for (auto&& r : records) {
+            for (auto&& r : plan.Indexes) {
                 if (r < 0) {
                     TStatusValidator::Validate(builder->AppendNull());
                 } else {
@@ -193,7 +228,7 @@ TConclusion<std::shared_ptr<IChunkedArray>> TConstructor::DoConstruct(
             return true;
         }
         return false;
-    }))("type", builderRecords->type()->ToString());
+    }))("type", recordsType->ToString());
     auto arrVariants = NArrow::FinishBuilder(std::move(builderVariants));
     auto arrRecords = NArrow::FinishBuilder(std::move(builderRecords));
     return std::make_shared<TDictionaryArray>(arrVariants, arrRecords);

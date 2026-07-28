@@ -7,7 +7,6 @@
 #include <ydb/library/formats/arrow/protos/accessor.pb.h>
 
 #include <contrib/libs/apache/arrow/cpp/src/arrow/array/builder_base.h>
-#include <library/cpp/containers/absl/flat_hash_set.h>
 
 #include <string_view>
 
@@ -94,40 +93,17 @@ public:
         return false;
     }
 
-    // True once `enumerate` produces at least `count` distinct values; stops as early as possible.
-    // `enumerate(consumer)` must call `consumer(TStringBuf)` per value and stop once `consumer` returns false.
-    template <class TEnumerator>
-    static bool HasAtLeastUniqueValues(const ui32 count, const TEnumerator& enumerate) {
-        if (count == 0) {
-            return true;
-        }
-        absl::flat_hash_set<TStringBuf> seen;
-        seen.reserve(count);
-        bool reached = false;
-        enumerate([&](const TStringBuf value) {
-            seen.emplace(value);
-            if (seen.size() >= count) {
-                reached = true;
-                return false;
-            }
-            return true;
-        });
-        return reached;
-    }
-
-    // Dictionary-encode a column unless it has "too many" distinct values.
-    // `enumerate` feeds the values counted toward the distinct set. Short-circuits as soon as the verdict is clear.
-    template <class TEnumerator>
-    bool IsDictionary(const ui32 presentCount, const TEnumerator& enumerate) const {
-        double fraction = GetDictionaryUniqueFractionResolved();
+    // Distinct-value count at which a column stops qualifying for dictionary encoding, given its present-value
+    // count. Empty when dictionary encoding is disabled; Max<ui32>() when every column qualifies.
+    std::optional<ui32> GetDictionaryUniqueThreshold(const ui32 presentCount) const {
+        const double fraction = GetDictionaryUniqueFractionResolved();
         if (fraction == 0) {
-            return false;
+            return std::nullopt;
         }
-        if (fraction == 1) {
-            return true;
+        if (fraction >= 1) {
+            return Max<ui32>();
         }
-        const ui32 tooManyUnique = static_cast<ui32>(fraction * presentCount) + 1;
-        return !HasAtLeastUniqueValues(tooManyUnique, enumerate);
+        return static_cast<ui32>(fraction * presentCount) + 1;
     }
 
     template <class TProto>

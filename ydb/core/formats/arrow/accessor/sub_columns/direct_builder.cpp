@@ -11,6 +11,8 @@
 
 #include <contrib/libs/simdjson/include/simdjson.h>
 
+#include <library/cpp/containers/absl/flat_hash_map.h>
+
 namespace NKikimr::NArrow::NAccessor::NSubColumns {
 
 void TColumnElements::BuildSparsedAccessor(const ui32 recordsCount, const EValueType valueType) {
@@ -31,11 +33,30 @@ void TColumnElements::BuildPlainAccessor(const ui32 recordsCount, const EValueTy
     Accessor = builder.Finish(recordsCount);
 }
 
-void TColumnElements::BuildDictionaryAccessor(const ui32 recordsCount, const EValueType valueType) {
-    BuildPlainAccessor(recordsCount, valueType);
-    const TChunkConstructionData cData(recordsCount, nullptr, GetArrowTypeForValueType(valueType),
-        NSerialization::TSerializerContainer::GetDefaultSerializer());
-    Accessor = NDictionary::TConstructor().Construct(Accessor, cData).DetachResult();
+bool TColumnElements::TryDictionaryEncode(const ui32 recordsCount, const ui32 tooManyUnique, const EValueType valueType) {
+    absl::flat_hash_map<TStringBuf, ui32> indexByValue;
+    std::vector<i32> indexes(recordsCount, -1);
+    std::unique_ptr<arrow::ArrayBuilder> distinctBuilder = MakeBuilderForValueType(valueType, Values.size(), DataSize);
+    for (ui32 slot = 0; slot < Values.size(); ++slot) {
+        const auto& blob = Values[slot];
+        auto [it, inserted] = indexByValue.try_emplace(TStringBuf(blob.data(), blob.size()), indexByValue.size());
+        if (inserted) {
+            if (indexByValue.size() >= tooManyUnique) {
+                return false;
+            }
+            AppendValueFromBinaryJson(*distinctBuilder, blob, valueType);
+        }
+        indexes[RecordIndexes[slot]] = it->second;
+    }
+    DictionaryPlan = NDictionary::TConstructor::TDictionaryPlan{
+        NArrow::FinishBuilder(std::move(distinctBuilder)), std::move(indexes), Values.size() < recordsCount};
+    return true;
+}
+
+void TColumnElements::BuildDictionaryAccessor() {
+    AFL_VERIFY(!Accessor);
+    AFL_VERIFY(DictionaryPlan);
+    Accessor = NDictionary::TConstructor::BuildFromPlan(*DictionaryPlan);
 }
 
 std::shared_ptr<TSubColumnsArray> TDataBuilder::Finish() {
@@ -78,7 +99,7 @@ std::shared_ptr<TSubColumnsArray> TDataBuilder::Finish() {
                     i->BuildSparsedAccessor(CurrentRecordIndex, valueType);
                     break;
                 case IChunkedArray::EType::Dictionary:
-                    i->BuildDictionaryAccessor(CurrentRecordIndex, valueType);
+                    i->BuildDictionaryAccessor();
                     break;
                 case IChunkedArray::EType::Undefined:
                 case IChunkedArray::EType::SerializedChunkedArray:

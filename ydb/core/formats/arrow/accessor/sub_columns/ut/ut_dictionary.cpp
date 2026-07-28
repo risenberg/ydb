@@ -1,6 +1,10 @@
 #include <ydb/core/formats/arrow/accessor/plain/accessor.h>
+#include <ydb/core/formats/arrow/accessor/dictionary/constructor.h>
 #include <ydb/core/formats/arrow/accessor/sub_columns/accessor.h>
 #include <ydb/core/formats/arrow/accessor/sub_columns/request.h>
+
+#include <contrib/libs/apache/arrow/cpp/src/arrow/array/builder_binary.h>
+#include <contrib/libs/apache/arrow/cpp/src/arrow/chunked_array.h>
 
 #include <ydb/services/metadata/abstract/request_features.h>
 
@@ -31,22 +35,24 @@ Y_UNIT_TEST_SUITE(SubColumnsDictionary) {
     }
 
     Y_UNIT_TEST(IsDictionaryGate) {
-        // Feeds `distinct` unique values (so the decision counts exactly `distinct` uniques) through the
-        // early-exit IsDictionary against `usage` records.
+        // Reproduces the encode decision: a threshold derived from the fraction, then PlanFromChunked
+        // short-circuiting once the distinct count reaches it. Feeds `distinct` unique values counted
+        // against `usage` present records.
         const auto gate = [](double fraction, ui32 distinct, ui32 usage) {
             NSubColumns::TSettings settings(4, 1024, 0, 0, NSubColumns::TDataAdapterContainer::GetDefault(), fraction);
-            std::vector<TString> values;
-            values.reserve(distinct);
-            for (ui32 i = 0; i < distinct; ++i) {
-                values.push_back(ToString(i));
+            const std::optional<ui32> threshold = settings.GetDictionaryUniqueThreshold(usage);
+            if (!threshold) {
+                return false;
             }
-            return settings.IsDictionary(usage, [&](const auto& consumer) {
-                for (const auto& v : values) {
-                    if (!consumer(std::string_view(v.data(), v.size()))) {
-                        break;
-                    }
-                }
-            });
+            arrow::BinaryBuilder builder;
+            for (ui32 i = 0; i < distinct; ++i) {
+                const TString v = ToString(i);
+                UNIT_ASSERT(builder.Append(v.data(), v.size()).ok());
+            }
+            std::shared_ptr<arrow::Array> arr;
+            UNIT_ASSERT(builder.Finish(&arr).ok());
+            const auto chunked = std::make_shared<arrow::ChunkedArray>(arr);
+            return NDictionary::TConstructor::PlanFromChunked(chunked, *threshold).has_value();
         };
         UNIT_ASSERT_C(!gate(0, 5, 100), "fraction 0 -> feature off");
         UNIT_ASSERT_C(gate(1, 300, 300), "distinct == usage boundary must pass at fraction 1");

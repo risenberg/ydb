@@ -1,6 +1,7 @@
 LIBRARY()
 
 PEERDIR(
+    library/cpp/containers/absl
     ydb/core/formats/arrow/accessor/abstract
     ydb/core/formats/arrow/filter
     ydb/library/formats/arrow

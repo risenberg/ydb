@@ -36,6 +36,19 @@ private:
 public:
     static std::shared_ptr<arrow::DataType> GetTypeByVariantsCount(const ui32 count);
 
+    struct TDictionaryPlan {
+        std::shared_ptr<arrow::Array> DistinctValues;   // in order of first appearance
+        std::vector<i32> Indexes;   // for each record, the position of its value in DistinctValues; < 0 for a null record
+        bool HasNulls = false;
+    };
+
+    // Returns nullopt as soon as the distinct count reaches `tooManyUnique` (pass Max<ui32>() to never cap).
+    static std::optional<TDictionaryPlan> PlanFromChunked(const std::shared_ptr<arrow::ChunkedArray>& chunked, const ui32 tooManyUnique);
+
+    // Assemble a dictionary from a plan. The stored dictionary is sorted by value and the record
+    // indices are remapped to it.
+    static std::shared_ptr<IChunkedArray> BuildFromPlan(const TDictionaryPlan& plan);
+
     static TBlobWithAdditionalAccessorData SerializeToBlobAndMeta(
         const std::shared_ptr<IChunkedArray>& columnData, const TChunkConstructionData& externalInfo);
 

@@ -16,30 +16,16 @@ std::shared_ptr<NArrow::NAccessor::IChunkedArray> TMergedBuilder::MaybeDictionar
     if (!NArrow::NAccessor::NSubColumns::CanBeDictionaryEncoded(valueType)) {
         return accessor;
     }
-    const auto enumerateNotNull = [&accessor](const auto& consumer) {
-        auto chunked = accessor->GetChunkedArray();
-        for (int c = 0; c < chunked->num_chunks(); ++c) {
-            const auto* binary = dynamic_cast<const arrow::BinaryArray*>(chunked->chunk(c).get());
-            if (!binary) {
-                continue;
-            }
-            for (int64_t i = 0; i < binary->length(); ++i) {
-                if (binary->IsNull(i)) {
-                    continue;
-                }
-                auto view = binary->GetView(i);
-                if (!consumer(TStringBuf(view.data(), view.size()))) {
-                    return;
-                }
-            }
-        }
-    };
-    if (!Settings.IsDictionary(filledRecordsCount, enumerateNotNull)) {
+    const std::optional<ui32> tooManyUnique = Settings.GetDictionaryUniqueThreshold(filledRecordsCount);
+    if (!tooManyUnique) {
         return accessor;
     }
-    const NArrow::NAccessor::TChunkConstructionData cData(
-        accessor->GetRecordsCount(), nullptr, arrow::binary(), NArrow::NSerialization::TSerializerContainer::GetDefaultSerializer());
-    return NArrow::NAccessor::NDictionary::TConstructor().Construct(accessor, cData).DetachResult();
+    // Deduplicate once here, reusing the result to build the dictionary instead of re-scanning in Construct.
+    auto plan = NArrow::NAccessor::NDictionary::TConstructor::PlanFromChunked(accessor->GetChunkedArray(), *tooManyUnique);
+    if (!plan) {
+        return accessor;
+    }
+    return NArrow::NAccessor::NDictionary::TConstructor::BuildFromPlan(*plan);
 }
 
 TColumnPortionResult TMergedBuilder::Finish(const TColumnMergeContext& cmContext) {
