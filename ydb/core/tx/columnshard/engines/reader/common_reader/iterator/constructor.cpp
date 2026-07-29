@@ -46,6 +46,7 @@ TBlobsFetcherTask::TBlobsFetcherTask(const std::vector<std::shared_ptr<IBlobsRea
 }
 
 void TColumnsFetcherTask::DoOnDataReady(const std::shared_ptr<NResourceBroker::NSubscribe::TResourcesGuard>& /*resourcesGuard*/) {
+    Source->CheckMutationWindowFree("columns_fetcher_callback");
     FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, Source->AddEvent("cf_reply"));
     const TMonotonic start = TMonotonic::Now();
     NBlobOperations::NRead::TCompositeReadBlobs blobsData = ExtractBlobsData();

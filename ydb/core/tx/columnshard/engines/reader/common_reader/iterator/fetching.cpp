@@ -13,6 +13,7 @@
 #include <ydb/core/tx/columnshard/engines/scheme/index_info.h>
 #include <ydb/core/tx/columnshard/engines/storage/indexes/skip_index/meta.h>
 
+#include <util/generic/scope.h>
 #include <util/string/builder.h>
 #include <yql/essentials/minikql/mkql_terminator.h>
 
@@ -31,6 +32,11 @@ bool TStepAction::DoApply(IDataReader& owner) {
 
 TConclusion<bool> TStepAction::DoExecuteImpl() {
     FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, Source->AddEvent("step_action"));
+    Source->CheckMutationWindowFree("step_action_entry");
+    Source->OnConveyorTaskStartTripwire();
+    Y_DEFER {
+        Source->OnConveyorTaskFinishTripwire();
+    };
     if (Source->GetContext()->IsAborted()) {
         AFL_VERIFY(!FinishedFlag);
         FinishedFlag = true;
@@ -74,7 +80,6 @@ TStepAction::TStepAction(
     }
 }
 
-NO_SANITIZE_THREAD
 void TProgramStep::ReportTracing(const std::shared_ptr<IDataSource>& source, const TDuration executionDurationMs,
     const TString& currentExecutionResult, const ui32 nodeId, const TString& currentCategoryName,
     const std::shared_ptr<NArrow::NSSA::IResourceProcessor>& processor) const {
@@ -240,7 +245,6 @@ void TProgramStep::ReportTracing(const std::shared_ptr<IDataSource>& source, con
     source->MutableExecutionContext().SetPrevExecutionResult(currentExecutionResult);
 }
 
-NO_SANITIZE_THREAD
 TConclusion<bool> TProgramStep::DoExecuteInplace(const std::shared_ptr<IDataSource>& source, const TFetchingScriptCursor& step) const {
     const bool started = !source->GetExecutionContext().HasProgramIterator();
     if (!source->GetExecutionContext().HasProgramIterator()) {
@@ -274,6 +278,13 @@ TConclusion<bool> TProgramStep::DoExecuteInplace(const std::shared_ptr<IDataSour
 
         const TMonotonic start = TMonotonic::Now();
         auto conclusion = source->GetExecutionContext().GetExecutionVisitorVerified()->Execute();
+        const bool inBackground = conclusion.IsSuccess() && *conclusion == NArrow::NSSA::IResourceProcessor::EExecutionResult::InBackground;
+        if (inBackground) {
+            // RACE-REPRO INSTRUMENTATION (local only): hold inside the harmful window so the fast
+            // resume interleaves with the epilogue's source writes below
+            source->OpenMutationWindow();
+            Sleep(TDuration::MilliSeconds(20));
+        }
         const TDuration executionDurationMs = TMonotonic::Now() - start;
         source->GetContext()->GetCommonContext()->GetCounters().AddExecutionDuration(executionDurationMs);
         signals->AddExecutionDuration(executionDurationMs);
@@ -284,7 +295,8 @@ TConclusion<bool> TProgramStep::DoExecuteInplace(const std::shared_ptr<IDataSour
         if (conclusion.IsFail()) {
             source->MutableExecutionContext().OnFailedProgramStepExecution();
             return conclusion;
-        } else if (*conclusion == NArrow::NSSA::IResourceProcessor::EExecutionResult::InBackground) {
+        } else if (inBackground) {
+            source->CloseMutationWindow();
             return false;
         }
         source->MutableExecutionContext().OnFinishProgramStepExecution();

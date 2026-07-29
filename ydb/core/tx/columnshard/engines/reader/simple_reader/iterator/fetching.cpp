@@ -234,6 +234,7 @@ public:
 
     virtual bool DoApply(IDataReader& indexedDataRead) override {
         auto* plainReader = static_cast<TPlainReadData*>(&indexedDataRead);
+        FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, Source->AddEvent("apply_result"));
         Source->MutableAs<IDataSource>()->SetCursor(std::move(Step));
         Source->StartSyncSection();
         const ui32 syncPointIndex = Source->GetAs<IDataSource>()->GetPurposeSyncPointIndex();
@@ -494,6 +495,7 @@ void TDuplicateFilter::TFilterSubscriber::OnFilterReady(NArrow::TColumnFilter&& 
         }
         source->MutableStageData().AddFilter(std::move(filter));
         Step.Next();
+        FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, source->AddEvent("dup_filter"));
         const auto convActorId = source->GetContext()->GetCommonContext()->GetConveyorProcessId();
         const auto scanActorId = source->GetContext()->GetCommonContext()->GetScanActorId();
         auto task = std::make_shared<TStepAction>(std::move(source), std::move(Step), scanActorId, false);

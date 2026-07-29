@@ -888,6 +888,48 @@ Y_UNIT_TEST_SUITE(KqpSinkMvcc) {
         tester.Execute();
     }
 
+    class TSingleScan: public TTableDataModificationTester {
+    protected:
+        void DoExecute() override {
+            auto client = Kikimr->GetQueryClient();
+
+            auto session = client.GetSession().GetValueSync().GetSession();
+
+            // force the async column-fetch path: no source qualifies as in-memory
+            auto csController = NYDBTest::TControllers::RegisterCSControllerGuard<NYDBTest::NColumnShard::TController>();
+            csController->SetOverridePeriodicWakeupActivationPeriod(TDuration::Seconds(1));
+            csController->SetOverrideMemoryLimitForPortionReading(1);
+            // wait for general compaction so the scan reads blob-backed portions
+            Sleep(TDuration::Seconds(3));
+            {
+                auto result = session.ExecuteQuery(Q_(R"(
+                    SELECT Value FROM `/Root/KV` WHERE Key = 1u;
+                )"), TTxControl::BeginTx(TTxSettings::SerializableRW()).CommitTx()).ExtractValueSync();
+                UNIT_ASSERT_VALUES_EQUAL_C(result.GetStatus(), EStatus::SUCCESS, result.GetIssues().ToString());
+                CompareYson(R"([[["One"]]])", FormatResultSetYson(result.GetResultSet(0)));
+            }
+        }
+    };
+
+    Y_UNIT_TEST(OlapScanTaskOverlap) {
+        TSingleScan tester;
+        tester.SetIsOlap(true);
+        tester.Execute();
+    }
+
+    class TSingleScanTrivial: public TSingleScan {
+    protected:
+        void Setup(TKikimrSettings& settings) override {
+            settings.SetColumnShardReaderClassName("TRIVIAL");
+        }
+    };
+
+    Y_UNIT_TEST(OlapScanTaskOverlapTrivial) {
+        TSingleScanTrivial tester;
+        tester.SetIsOlap(true);
+        tester.Execute();
+    }
+
     class TInsertConflictingKey: public TTableDataModificationTester {
         YDB_ACCESSOR(bool, CommitOnInsert, false);
     protected:

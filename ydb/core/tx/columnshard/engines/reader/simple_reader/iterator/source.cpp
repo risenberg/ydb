@@ -63,6 +63,7 @@ void IDataSource::InitializeProcessing(const std::shared_ptr<NCommon::IDataSourc
 
 void IDataSource::ContinueCursor(const std::shared_ptr<NCommon::IDataSource>& sourcePtr) {
     AFL_VERIFY(!!ScriptCursor)("source_idx", GetSourceIdx());
+    FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, AddEvent("continue_cursor"));
     if (ScriptCursor->Next()) {
         YDB_LOG_DEBUG("",
             {"sourceIdx", GetSourceIdx()},

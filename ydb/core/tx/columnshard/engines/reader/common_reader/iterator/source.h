@@ -21,6 +21,7 @@
 
 #include <library/cpp/lwtrace/shuttle.h>
 #include <util/string/join.h>
+#include <util/system/env.h>
 
 namespace NKikimr::NOlap {
 class IDataReader;
@@ -89,6 +90,8 @@ public:
 
 private:
     TAtomic SyncSectionFlag = 1;
+    TAtomic ConveyorTaskDetector = 0;
+    TAtomic MutationWindowDetector = 0;
     YDB_READONLY(EType, Type, EType::Undefined);
     YDB_READONLY(ui32, SourceIdx, 0);
     YDB_READONLY_DEF(ui64, DeprecatedPortionId);
@@ -186,34 +189,28 @@ public:
                                 : GetStageResult().GetBatch()->num_rows();
     }
 
-    NO_SANITIZE_THREAD
     void AddExecutionDuration(const TDuration d) {
         TotalExecutionDuration += d;
     }
 
-    NO_SANITIZE_THREAD
     void AddBytesRead(const ui64 bytes) {
         TotalBytesRead += bytes;
     }
 
     void OnStartProcessing();
 
-    NO_SANITIZE_THREAD
     TDuration GetTotalDuration() const {
         return SourceCreatedTimestamp ? (TMonotonic::Now() - SourceCreatedTimestamp) : TDuration::Zero();
     }
 
-    NO_SANITIZE_THREAD
     TDuration GetTotalExecutionDuration() const {
         return TotalExecutionDuration;
     }
 
-    NO_SANITIZE_THREAD
     ui64 GetTotalBytesRead() const {
         return TotalBytesRead;
     }
 
-    NO_SANITIZE_THREAD
     ui64 ExtractTotalBytesRead() {
         const ui64 result = TotalBytesRead;
         TotalBytesRead = 0;
@@ -291,6 +288,37 @@ public:
     void AddEvent(const TString& evDescription);
 
     TString GetEventsReport() const;
+
+    // RACE-REPRO INSTRUMENTATION (local only): abort at the second concurrent conveyor task
+    // for one source; TRIPWIRE_NONFATAL=1 lets the overlap run so TSAN can observe the races
+    void OnConveyorTaskStartTripwire() {
+        if (!AtomicCas(&ConveyorTaskDetector, 1, 0)) {
+            static const bool nonFatal = !GetEnv("TRIPWIRE_NONFATAL").empty();
+            AFL_VERIFY(nonFatal)("events", GetEventsReport())("source_idx", GetSourceIdx());
+        }
+    }
+
+    void OnConveyorTaskFinishTripwire() {
+        Y_UNUSED(AtomicCas(&ConveyorTaskDetector, 0, 1));
+    }
+
+    // RACE-REPRO INSTRUMENTATION (local only): the window between arming background work and
+    // finishing the epilogue's source writes; concurrent entry here is the harmful interleaving
+    void OpenMutationWindow() {
+        AFL_VERIFY(AtomicCas(&MutationWindowDetector, 1, 0));
+        FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, AddEvent("bg_window"));
+    }
+
+    void CloseMutationWindow() {
+        AFL_VERIFY(AtomicCas(&MutationWindowDetector, 0, 1));
+    }
+
+    void CheckMutationWindowFree(const char* actor) {
+        if (AtomicGet(MutationWindowDetector)) {
+            static const bool nonFatal = !GetEnv("TRIPWIRE_NONFATAL").empty();
+            AFL_VERIFY(nonFatal)("actor", actor)("events", GetEventsReport())("source_idx", GetSourceIdx());
+        }
+    }
 
     TExecutionContext& MutableExecutionContext() {
         return ExecutionContext;

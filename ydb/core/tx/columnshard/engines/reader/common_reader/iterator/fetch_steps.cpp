@@ -26,6 +26,11 @@ TConclusion<bool> TColumnBlobsFetchingStep::DoExecuteInplace(
     const std::shared_ptr<IDataSource>& source, const TFetchingScriptCursor& step) const {
     const TMonotonic start = TMonotonic::Now();
     auto result = !source->StartFetchingColumns(source, step, Columns);
+    if (!result) {
+        // RACE-REPRO INSTRUMENTATION (local only): hold in the post-arm tail so the resumed
+        // task executes its own source writes before the counter updates below run
+        Sleep(TDuration::MilliSeconds(20));
+    }
     const TDuration executionDurationMs = TMonotonic::Now() - start;
     source->AddExecutionDuration(executionDurationMs);
 
