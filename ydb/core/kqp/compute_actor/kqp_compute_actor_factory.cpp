@@ -188,7 +188,7 @@ public:
             info.TraceId = NWilson::TTraceId(args.TraceId);
             IActor* computeActor = CreateKqpScanComputeActor(
                 args.ExecuterId, args.TxId, args.Task, AsyncIoFactory, runtimeSettings, memoryLimits,
-                std::move(args.TraceId), std::move(args.Arena),
+                std::move(args.TraceId), std::move(args.TraceOrbit), std::move(args.Arena),
                 std::move(schedulableOptions), args.BlockTrackingMode, std::move(args.UserToken), args.Database);
             TActorId result = args.UseBatchPool
                 ? TlsActivationContext->Register(computeActor, TActorId(), TMailboxType::HTSwap, AppData()->BatchPoolId)

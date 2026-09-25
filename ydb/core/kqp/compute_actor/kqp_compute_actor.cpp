@@ -286,12 +286,12 @@ using namespace NYql::NDqProto;
 IActor* CreateKqpScanComputeActor(const TActorId& executerId, ui64 txId,
     TDqTask* task, IDqAsyncIoFactory::TPtr asyncIoFactory,
     const NYql::NDq::TComputeRuntimeSettings& settings, const TComputeMemoryLimits& memoryLimits, NWilson::TTraceId traceId,
-    TIntrusivePtr<NActors::TProtoArenaHolder> arena, NScheduler::TSchedulableOptions schedulableOptions,
+    NLWTrace::TOrbit traceOrbit, TIntrusivePtr<NActors::TProtoArenaHolder> arena, NScheduler::TSchedulableOptions schedulableOptions,
     NKikimrConfig::TTableServiceConfig::EBlockTrackingMode mode,
     TIntrusiveConstPtr<NACLib::TUserToken> userToken, const TString& database)
 {
     return new NScanPrivate::TKqpScanComputeActor(std::move(schedulableOptions), executerId, txId, task, std::move(asyncIoFactory),
-        settings, memoryLimits, std::move(traceId), std::move(arena), mode, std::move(userToken), database);
+        settings, memoryLimits, std::move(traceId), std::move(traceOrbit), std::move(arena), mode, std::move(userToken), database);
 }
 
 IActor* CreateKqpScanFetcher(const NKikimrKqp::TKqpSnapshot& snapshot, std::vector<NActors::TActorId>&& computeActors,
@@ -300,9 +300,9 @@ IActor* CreateKqpScanFetcher(const NKikimrKqp::TKqpSnapshot& snapshot, std::vect
     const ui64 txId, TMaybe<ui64> lockTxId, ui32 lockNodeId,
     TMaybe<NKikimrDataEvents::ELockMode> lockMode, const TShardsScanningPolicy& shardsScanningPolicy,
     TIntrusivePtr<TKqpCounters> counters, NWilson::TTraceId traceId, const TCPULimits& cpuLimits,
-    bool useBatchPool) {
+    NLWTrace::TOrbit traceOrbit, bool useBatchPool) {
     return new NScanPrivate::TKqpScanFetcherActor(snapshot, settings, std::move(computeActors), txId, lockTxId, lockNodeId, lockMode,
-        databasePath, schedulerPool, meta, shardsScanningPolicy, counters, std::move(traceId), cpuLimits, useBatchPool);
+        databasePath, schedulerPool, meta, shardsScanningPolicy, counters, std::move(traceId), cpuLimits, std::move(traceOrbit), useBatchPool);
 }
 
 } // namespace NKikimr::NKqp

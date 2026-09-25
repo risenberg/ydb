@@ -750,6 +750,9 @@ protected:
         return Nothing();
     }
 
+    virtual void BeforeReportState() {
+    }
+
     void FillExtraData(NDqProto::TEvComputeActorState& state) {
         auto* extraData = state.MutableExtraData();
         for (auto& [index, input] : SourcesMap) {
@@ -791,6 +794,7 @@ protected:
         auto& record = execEv->Record;
 
         FillExtraData(record);
+        static_cast<TDerived*>(this)->BeforeReportState();
 
         record.SetState(State);
         record.SetStatusCode(statusCode);

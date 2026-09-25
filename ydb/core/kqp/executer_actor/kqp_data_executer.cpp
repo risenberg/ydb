@@ -452,6 +452,7 @@ private:
                 hFunc(TEvPrivate::TEvRetry, HandleRetry);
                 hFunc(TEvInterconnect::TEvNodeDisconnected, HandleDisconnected);
                 hFunc(TEvKqpNode::TEvStartKqpTasksResponse, HandleStartKqpTasksResponse);
+                hFunc(TEvKqpLwTrace, HandleLwTrace);
                 hFunc(TEvDqCompute::TEvState, HandleComputeState);
                 hFunc(TEvDqCompute::TEvNodeState, HandleNodeState);
                 hFunc(TEvDqCompute::TEvChannelData, HandleChannelData);

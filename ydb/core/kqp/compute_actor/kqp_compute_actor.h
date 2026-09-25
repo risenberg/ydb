@@ -10,6 +10,7 @@
 #include <ydb/library/yql/dq/actors/compute/dq_compute_actor.h>
 #include <ydb/library/yql/dq/actors/compute/dq_compute_actor_async_io_factory.h>
 #include <ydb/library/yql/providers/s3/actors_factory/yql_s3_actors_factory.h>
+#include <library/cpp/lwtrace/shuttle.h>
 
 namespace NKikimr {
 
@@ -78,6 +79,7 @@ IActor* CreateKqpComputeActor(const TActorId& executerId, ui64 txId, NYql::NDqPr
 IActor* CreateKqpScanComputeActor(const TActorId& executerId, ui64 txId, NYql::NDqProto::TDqTask* task,
     NYql::NDq::IDqAsyncIoFactory::TPtr asyncIoFactory, const NYql::NDq::TComputeRuntimeSettings& settings,
     const NYql::NDq::TComputeMemoryLimits& memoryLimits, NWilson::TTraceId traceId,
+    NLWTrace::TOrbit traceOrbit,
     TIntrusivePtr<NActors::TProtoArenaHolder> arena,
     NScheduler::TSchedulableOptions schedulableOptions,
     NKikimrConfig::TTableServiceConfig::EBlockTrackingMode mode,
@@ -89,6 +91,7 @@ IActor* CreateKqpScanFetcher(const NKikimrKqp::TKqpSnapshot& snapshot, std::vect
     const ui64 txId, TMaybe<ui64> lockTxId, ui32 lockNodeId,
     TMaybe<NKikimrDataEvents::ELockMode> lockMode, const TShardsScanningPolicy& shardsScanningPolicy,
     TIntrusivePtr<TKqpCounters> counters, NWilson::TTraceId traceId, const TCPULimits& cpuLimits,
+    NLWTrace::TOrbit traceOrbit,
     bool useBatchPool = false);
 
 NYql::NDq::IDqAsyncIoFactory::TPtr CreateKqpAsyncIoFactory(

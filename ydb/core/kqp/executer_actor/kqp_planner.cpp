@@ -14,6 +14,7 @@
 #include <ydb/core/kqp/node_service/kqp_query_control_plane.h>
 #include <ydb/core/kqp/common/control.h>
 #include <ydb/core/fq/libs/checkpointing/events/events.h>
+#include <library/cpp/lwtrace/mon/mon_lwtrace.h>
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::KQP_EXECUTER
 
@@ -129,6 +130,7 @@ TKqpPlanner::TKqpPlanner(TKqpPlanner::TArgs&& args)
     , RlPath(args.RlPath)
     , ResourcesSnapshot(std::move(args.ResourcesSnapshot))
     , ExecuterSpan(args.ExecuterSpan)
+    , TraceOrbit(args.TraceOrbit)
     , Trace(args.Trace)
     , ExecuterRetriesConfig(args.ExecuterRetriesConfig)
     , TasksGraph(args.TasksGraph)
@@ -195,6 +197,8 @@ bool TKqpPlanner::SendStartKqpTasksRequest(ui32 requestId, const TActorId& targe
     } else {
         ev = SerializeRequest(requestData);
     }
+
+    NLwTraceMonPage::TraceManager().CreateTraceRequest(*ev->Record.MutableLwTrace(), TraceOrbit);
 
     if (isShutdown) {
         requestData.RetryNumber = ExecuterRetriesConfig.GetMaxRetryNumber();
