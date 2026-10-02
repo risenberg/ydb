@@ -225,7 +225,7 @@ void TTxScan::StartScanActor(const TReadMetadataBase::TConstPtr& readMetadataRan
             Self->DataAccessorsManager.GetObjectPtrVerified(), Self->ColumnDataManager.GetObjectPtrVerified(), shardingPolicy,
             request.GetScanId(), request.GetTxId(), request.GetGeneration(), requestCookie, Self->TabletID(),
             TDuration::MilliSeconds(request.GetTimeoutMs()), readMetadataRange, request.GetDataFormat(), Self->Counters.GetScanCounters(),
-            cpuLimits, std::move(orbit), rawPathId, GetSchedulerPool()), TMailboxType::HTSwap, scanPoolId);
+            cpuLimits, std::move(orbit), NWilson::TTraceId(Ev->TraceId), rawPathId, GetSchedulerPool()), TMailboxType::HTSwap, scanPoolId);
     Self->InFlightReadsTracker.AddScanActorId(requestCookie, scanActorId);
 
     YDB_LOG_DEBUG("",

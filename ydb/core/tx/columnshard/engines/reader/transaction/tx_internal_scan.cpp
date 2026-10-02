@@ -95,7 +95,8 @@ void TTxInternalScan::StartScanActor(
     auto scanActorId = ctx.Register(new TColumnShardScan(Self->SelfId(), InternalScanEvent->Sender, Self->ScanDiagnosticsActorId,
         Self->GetStoragesManager(), Self->DataAccessorsManager.GetObjectPtrVerified(), Self->ColumnDataManager.GetObjectPtrVerified(),
         TComputeShardingPolicy(), ScanId, request.GetLockId().value_or(0), ScanGen, requestCookie, Self->TabletID(), TDuration::Max(),
-        readMetadataRange, NKikimrDataEvents::FORMAT_ARROW, Self->Counters.GetScanCounters(), {}, std::move(orbit)));
+        readMetadataRange, NKikimrDataEvents::FORMAT_ARROW, Self->Counters.GetScanCounters(), {}, std::move(orbit),
+        NWilson::TTraceId(InternalScanEvent->TraceId)));
 
     Self->InFlightReadsTracker.AddScanActorId(requestCookie, scanActorId);
     YDB_LOG_DEBUG("",

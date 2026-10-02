@@ -6,6 +6,7 @@
 #include <ydb/core/tx/columnshard/resource_subscriber/actor.h>
 
 #include <ydb/library/formats/arrow/arrow_helpers.h>
+#include <ydb/library/wilson_ids/wilson.h>
 
 #include <yql/essentials/core/issue/yql_issue.h>
 
@@ -62,11 +63,13 @@ TColumnShardScan::TColumnShardScan(const TActorId& columnShardActorId, const TAc
     ui32 scanId, ui64 txId, ui32 scanGen, ui64 requestCookie, ui64 tabletId, TDuration timeout,
     const TReadMetadataBase::TConstPtr& readMetadataRange, NKikimrDataEvents::EDataFormat dataFormat,
     const NColumnShard::TScanCounters& scanCountersPool, const NConveyorComposite::TCPULimitsConfig& cpuLimits,
-    std::shared_ptr<NLWTrace::TOrbit> orbit, ui64 pathId, std::optional<NKqp::NScheduler::NHdrf::TFullPoolId> schedulerPool)
+    std::shared_ptr<NLWTrace::TOrbit> orbit, NWilson::TTraceId traceId, ui64 pathId,
+    std::optional<NKqp::NScheduler::NHdrf::TFullPoolId> schedulerPool)
     : StoragesManager(storagesManager)
     , DataAccessorsManager(dataAccessorsManager)
     , ColumnDataManager(columnDataManager)
     , ScanOrbit(std::move(orbit))
+    , TraceId(std::move(traceId))
     , PathId(pathId)
     , SchedulerPool(std::move(schedulerPool))
     , ColumnShardActorId(columnShardActorId)
@@ -105,6 +108,10 @@ void TColumnShardScan::Bootstrap(const TActorContext& ctx) {
     ScanIterator = ReadMetadataRange->StartScan(context);
     auto startResult = ScanIterator->Start();
     StartInstant = TMonotonic::Now();
+    ScanSpan = NWilson::TSpan(TWilsonTablet::TabletTopLevel, NWilson::TTraceId(TraceId), "ColumnShard.Scan", NWilson::EFlags::AUTO_END);
+    if (ScanSpan) {
+        ScanSpan.Attribute("tablet_id", ::ToString(TabletId)).Attribute("scan_id", ::ToString(ScanId));
+    }
     if (!startResult) {
         YDB_LOG_ERROR_COMP(NKikimrServices::TX_COLUMNSHARD_SCAN, "",
             {"event", "BootstrapError"},
@@ -566,7 +573,11 @@ bool TColumnShardScan::SendResult(bool pageFault, bool lastBatch, ui64 sourceId)
     LWTRACK(SendResult, *ScanOrbit, PathId, TabletId, TxId, ScanId, sourceId, Result->GetRowsCount(),
         (Result->ArrowBatch ? NArrow::GetTableDataSize(Result->ArrowBatch) : 0), Result->CpuTime, Result->WaitTime, TInstant::Now() - LastSend,
         Result->Finished);
-    Send(ScanComputeActorId, Result.Release(), IEventHandle::FlagTrackDelivery);   // TODO: FlagSubscribeOnSession ?
+    NWilson::TSpan span(TWilsonTablet::TabletTopLevel, NWilson::TTraceId(TraceId), "ColumnShard.ScanResultSent", NWilson::EFlags::AUTO_END);
+    if (span) {
+        span.Attribute("tablet_id", ::ToString(TabletId)).Attribute("scan_id", ::ToString(ScanId)).Attribute("finished", Result->Finished);
+    }
+    Send(ScanComputeActorId, Result.Release(), IEventHandle::FlagTrackDelivery, 0, span.GetTraceId());   // TODO: FlagSubscribeOnSession ?
     LastSend = TInstant::Now();
 
     if (Finished || ++BuildResultCounter % 100 == 0) {
@@ -611,6 +622,7 @@ void TColumnShardScan::SendScanAborted() {
 }
 
 void TColumnShardScan::Finish(const NColumnShard::TScanCounters::EStatusFinish status) {
+    ScanSpan.End();
     if (AppDataVerified().ColumnShardConfig.GetEnableDiagnostics()) {
         auto scanIteratorDiagnostics = ScanIterator ? ScanIterator->DebugString(true) : TString(NoScanIteratorDiagnostics);
         Send(ScanDiagnosticsActorId,

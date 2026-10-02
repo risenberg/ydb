@@ -50,7 +50,7 @@ Y_UNIT_TEST_SUITE(TColumnShardScanActorTests) {
             /*storagesManager*/ nullptr, /*dataAccessorsManager*/ nullptr, /*columnDataManager*/ nullptr, TComputeShardingPolicy(), /*scanId*/ 1,
             /*txId*/ 1, /*scanGen*/ 1, requestCookie, /*tabletId*/ 1, TDuration::Zero(), std::make_shared<TIdleReadMetadata>(),
             NKikimrDataEvents::FORMAT_ARROW, NColumnShard::TScanCounters(), NConveyorComposite::TCPULimitsConfig(),
-            std::make_shared<NLWTrace::TOrbit>()));
+            std::make_shared<NLWTrace::TOrbit>(), NWilson::TTraceId()));
         runtime.GrabEdgeEvent<NKqp::TEvKqpCompute::TEvScanInitActor>(compute);
 
         runtime.Send(new IEventHandle(scan, TActorId(), new NActors::TEvents::TEvPoison()));

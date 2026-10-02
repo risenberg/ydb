@@ -164,6 +164,12 @@ void TKqpScanFetcherActor::HandleExecute(TEvKqpCompute::TEvScanData::TPtr& ev) {
             ev->Get()->CpuTime, ev->Get()->WaitTime, ev->Get()->Finished);
     }
 
+    NWilson::TSpan receiveSpan(TWilsonKqp::ComputeActor, NWilson::TTraceId(ev->TraceId),
+                               "KqpScan.ResponseReceived", NWilson::EFlags::AUTO_END);
+    if (receiveSpan) {
+        receiveSpan.Attribute("tablet_id", ::ToString(state->TabletId)).Attribute("scan_id", ::ToString(ScanId)).Attribute("finished", ev->Get()->Finished);
+    }
+
     TStringBuilder locks;
     for (const auto& lock : ev->Get()->LocksInfo.Locks) {
         locks << lock.ShortDebugString();

@@ -84,6 +84,8 @@ PEERDIR(
     ydb/core/tx/tracing
     ydb/core/util
     ydb/library/actors/core
+    ydb/library/actors/wilson
+    ydb/library/wilson_ids
     ydb/library/chunks_limiter
     ydb/library/slide_limiter/usage
     ydb/library/yql/dq/actors/compute

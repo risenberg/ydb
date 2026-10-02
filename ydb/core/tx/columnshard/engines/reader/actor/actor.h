@@ -14,6 +14,7 @@
 #include <ydb/library/actors/core/actor_bootstrapped.h>
 #include <ydb/library/actors/core/log.h>
 #include <ydb/library/actors/struct_log/log_stack.h>
+#include <ydb/library/actors/wilson/wilson_span.h>
 #include <ydb/library/chunks_limiter/chunks_limiter.h>
 
 #include <library/cpp/lwtrace/all.h>
@@ -30,6 +31,8 @@ private:
     std::optional<TMonotonic> StartInstant;
     std::optional<TMonotonic> FinishInstant;
     std::shared_ptr<NLWTrace::TOrbit> ScanOrbit;
+    const NWilson::TTraceId TraceId;
+    NWilson::TSpan ScanSpan;
     const ui64 PathId;
     const std::optional<NKqp::NScheduler::NHdrf::TFullPoolId> SchedulerPool;
 
@@ -47,7 +50,7 @@ public:
         ui32 scanId, ui64 txId, ui32 scanGen, ui64 requestCookie, ui64 tabletId, TDuration timeout,
         const TReadMetadataBase::TConstPtr& readMetadataRange, NKikimrDataEvents::EDataFormat dataFormat,
         const NColumnShard::TScanCounters& scanCountersPool, const NConveyorComposite::TCPULimitsConfig& cpuLimits,
-        std::shared_ptr<NLWTrace::TOrbit> orbit, ui64 pathId = 0,
+        std::shared_ptr<NLWTrace::TOrbit> orbit, NWilson::TTraceId traceId, ui64 pathId = 0,
         std::optional<NKqp::NScheduler::NHdrf::TFullPoolId> schedulerPool = std::nullopt);
 
     void Bootstrap(const TActorContext& ctx);

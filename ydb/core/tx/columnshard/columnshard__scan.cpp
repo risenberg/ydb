@@ -10,6 +10,8 @@
 #include <ydb/core/protos/kqp.pb.h>
 
 #include <ydb/library/actors/core/log.h>
+#include <ydb/library/actors/wilson/wilson_span.h>
+#include <ydb/library/wilson_ids/wilson.h>
 
 #define YDB_LOG_THIS_FILE_COMPONENT TX_COLUMNSHARD
 
@@ -20,6 +22,12 @@ void TColumnShard::Handle(TEvDataShard::TEvKqpScan::TPtr& ev, const TActorContex
     ui64 txId = record.GetTxId();
     const auto& scanId = record.GetScanId();
     const auto& snapshot = record.GetSnapshot();
+
+    NWilson::TSpan requestSpan(
+        TWilsonTablet::TabletTopLevel, NWilson::TTraceId(ev->TraceId), "ColumnShard.ScanRequestReceived", NWilson::EFlags::AUTO_END);
+    if (requestSpan) {
+        requestSpan.Attribute("tablet_id", ::ToString(TabletID())).Attribute("scan_id", ::ToString(scanId));
+    }
 
     NOlap::TSnapshot readVersion(snapshot.GetStep(), snapshot.GetTxId());
     NOlap::TSnapshot maxReadVersion = GetMaxReadVersion();
@@ -32,6 +40,7 @@ void TColumnShard::Handle(TEvDataShard::TEvKqpScan::TPtr& ev, const TActorContex
         {"tabletID", TabletID()});
 
     if (maxReadVersion < readVersion) {
+        requestSpan.Event("WaitingForSnapshot");
         WaitingScans.emplace(readVersion, std::move(ev));
         WaitPlanStep(readVersion.GetPlanStep());
         return;

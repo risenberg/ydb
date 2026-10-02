@@ -57,6 +57,8 @@
 #include <ydb/library/actors/core/hfunc.h>
 #include <ydb/library/actors/core/log.h>
 #include <ydb/library/actors/struct_log/log_stack.h>
+#include <ydb/library/actors/wilson/wilson_span.h>
+#include <ydb/library/wilson_ids/wilson.h>
 #include <ydb/services/metadata/service.h>
 
 #include <util/generic/object_counter.h>
@@ -178,6 +180,11 @@ void TColumnShard::RescheduleWaitingReads() {
         if (maxReadVersion < it->first) {
             minWaitingStep = Min(minWaitingStep, it->first.GetPlanStep());
             break;
+        }
+        NWilson::TSpan waitSpan(TWilsonTablet::TabletTopLevel, NWilson::TTraceId(it->second->TraceId), "ColumnShard.SnapshotWaitFinished",
+            NWilson::EFlags::AUTO_END);
+        if (waitSpan) {
+            waitSpan.Attribute("tablet_id", ::ToString(TabletID())).Attribute("scan_id", ::ToString(it->second->Get()->Record.GetScanId()));
         }
         TActivationContext::Send(it->second.Release());
         it = WaitingScans.erase(it);

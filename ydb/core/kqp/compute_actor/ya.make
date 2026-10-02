@@ -28,6 +28,8 @@ PEERDIR(
     ydb/library/formats/arrow
     ydb/library/formats/arrow/protos
     ydb/library/formats/arrow/common
+    ydb/library/actors/wilson
+    ydb/library/wilson_ids
     ydb/library/yql/dq/actors/compute
     ydb/library/yql/dq/actors/input_transforms
     ydb/library/yql/dq/comp_nodes
