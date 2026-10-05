@@ -45,6 +45,7 @@ class TBlobStorageQueue {
         ui64 Cost;
         bool DirtyCost;
         TBSQueueTimer ProcessingTimer;
+        double WaitingSinceSeconds = 0;
 
         TTrackableList<TItem>::iterator Iterator;
 
@@ -125,6 +126,7 @@ class TBlobStorageQueue {
 public:
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueWaitingItems;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueWaitingBytes;
+    ::NMonitoring::THistogramPtr QueueWaitTimeMs;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueInFlightItems;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueInFlightBytes;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueInFlightCost;

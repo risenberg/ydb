@@ -262,6 +262,8 @@ class TRealBlockDevice : public IBlockDevice {
                 return;
             }
             ui64 size = op->GetSize();
+            TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
+            action->SubmitQueueTime = HPNow();
             OperationsToBeSubmit.Push(op);
             NHPTimer::STime start;
             if (AtomicGetAndAdd(SubmitInFlightBytes, size) > SubmitInFlightBytesMax) {
@@ -280,6 +282,16 @@ class TRealBlockDevice : public IBlockDevice {
                             {"submitInFlightBytesMax", SubmitInFlightBytesMax});
                     }
                 }
+            }
+        }
+
+        void StartDeviceSlotWait(IAsyncIoOperation *op) {
+            TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
+            if (action->SubmitQueueTime) {
+                auto now = HPNow();
+                Device.Mon.SubmitQueueWait.Increment(HPMilliSecondsFloat(now - action->SubmitQueueTime));
+                action->DeviceSlotWaitStartTime = now;
+                action->SubmitQueueTime = 0;
             }
         }
     };
@@ -311,6 +323,7 @@ class TRealBlockDevice : public IBlockDevice {
         void Submit(IAsyncIoOperation *op) {
             TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
             const ui64 opSize = op->GetSize();
+            StartDeviceSlotWait(op);
 
             if (!Device.QuitCounter.Increment()) {
                 Device.FreeOperation(op);
@@ -321,6 +334,7 @@ class TRealBlockDevice : public IBlockDevice {
 
             double blockedMs = 0;
             action->OperationIdx = Device.FlightControl.Schedule(blockedMs, opSize);
+            Device.Mon.DeviceSlotWait.Increment(HPMilliSecondsFloat(HPNow() - action->DeviceSlotWaitStartTime));
 
             *Device.Mon.DeviceWaitTimeMs += blockedMs;
 
@@ -700,6 +714,7 @@ class TRealBlockDevice : public IBlockDevice {
         bool Submit(IAsyncIoOperation *op, i64 *inFlight) {
             TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
             const ui64 opSize = op->GetSize();
+            StartDeviceSlotWait(op);
 
             action->OperationIdx = Device.FlightControl.TrySchedule(opSize);
             if (action->OperationIdx == 0) {
@@ -709,6 +724,7 @@ class TRealBlockDevice : public IBlockDevice {
                 }
                 return false;
             }
+            Device.Mon.DeviceSlotWait.Increment(HPMilliSecondsFloat(HPNow() - action->DeviceSlotWaitStartTime));
 
             if (OpScheduleFailedTime != 0) {
                 // Scheduling failed previously, calculate how much time operation had to wait for scheduling.
@@ -772,6 +788,12 @@ class TRealBlockDevice : public IBlockDevice {
             while(!SubmitQuitCounter.IsBlocked() || SubmitQuitCounter.Get()) {
                 // Submit events
                 TAtomicBase ops = OperationsToBeSubmit.GetWaitingSize();
+                if (ops > 0) {
+                    IAsyncIoOperation *op = OperationsToBeSubmit.Head();
+                    if (op) {
+                        StartDeviceSlotWait(op);
+                    }
+                }
                 if (inFlight < (i64)Device.DeviceInFlight && ops > 0) {
                     for (TAtomicBase idx = 0; idx < ops; ++idx) {
                         IAsyncIoOperation *op = OperationsToBeSubmit.Head();

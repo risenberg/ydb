@@ -211,6 +211,24 @@ struct TEventTypeField {
     PROBE(PDiskChunkReadPieceAddToScheduler, GROUPS("PDisk", "PDiskRequest"), \
       TYPES(TPDiskIdField, ui32, ui64, ui64), \
       NAMES("pdisk", "pieceIdx", "offset", "size")) \
+    PROBE(PDiskChunkReadInputDequeued, GROUPS("PDisk", "PDiskRequest"), \
+      TYPES(TPDiskIdField, ui64, double), \
+      NAMES("pdisk", "reqId", "queueWaitMs")) \
+    PROBE(PDiskChunkReadPiecesScheduled, GROUPS("PDisk", "PDiskRequest"), \
+      TYPES(TPDiskIdField, ui64, ui32), \
+      NAMES("pdisk", "reqId", "pieces")) \
+    PROBE(PDiskChunkReadPieceDequeued, GROUPS("PDisk", "PDiskRequest"), \
+      TYPES(TPDiskIdField, ui64, ui64, double), \
+      NAMES("pdisk", "reqId", "offset", "jointQueueWaitMs")) \
+    PROBE(PDiskChunkReadDeviceReadSent, GROUPS("PDisk", "PDiskRequest"), \
+      TYPES(TPDiskIdField, ui64, ui64, ui64), \
+      NAMES("pdisk", "reqId", "deviceReadIdx", "size")) \
+    PROBE(PDiskChunkReadDeviceReadCompleted, GROUPS("PDisk", "PDiskRequest"), \
+      TYPES(TPDiskIdField, ui64, ui64, double, double), \
+      NAMES("pdisk", "reqId", "size", "deviceTimeMs", "completionTimeMs")) \
+    PROBE(PDiskChunkReadSummary, GROUPS("PDisk", "PDiskRequest"), \
+      TYPES(TPDiskIdField, ui64, ui64), \
+      NAMES("pdisk", "reqId", "deviceReadSubmissions")) \
     PROBE(PDiskChunkReadPiecesSendToDevice, GROUPS("PDisk", "PDiskRequest"), \
       TYPES(TPDiskIdField), \
       NAMES("pdisk")) \
