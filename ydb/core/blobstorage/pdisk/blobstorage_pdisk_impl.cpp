@@ -1219,6 +1219,8 @@ TPDisk::EChunkReadPieceResult TPDisk::ChunkReadPiece(TIntrusivePtr<TChunkRead> &
         auto buf = read->FinalCompletion->GetCommonBuffer();
         Y_VERIFY_S(bytesToRead <= buf->SizeWithTail(), buf->SizeWithTail());
         ui8 *data = read->FinalCompletion->GetCommonBuffer()->RawDataPtr(0, diskSize);
+        const ui64 deviceReadIdx = read->FinalCompletion->RegisterDeviceRead();
+        LWTRACK(PDiskChunkReadDeviceReadSent, read->Orbit, PCtx->PDiskId, read->ReqId.Id, deviceReadIdx, diskSize);
         BlockDevice->PreadAsync(
             data,
             diskSize,
@@ -1269,6 +1271,8 @@ TPDisk::EChunkReadPieceResult TPDisk::ChunkReadPiece(TIntrusivePtr<TChunkRead> &
     completion->Orbit = std::move(orbit);
     Y_VERIFY_S(bytesToRead <= completion->GetBuffer()->Size(), PCtx->PDiskLogPrefix);
     ui8 *data = completion->GetBuffer()->Data();
+    const ui64 deviceReadIdx = read->FinalCompletion->RegisterDeviceRead();
+    LWTRACK(PDiskChunkReadDeviceReadSent, read->Orbit, PCtx->PDiskId, read->ReqId.Id, deviceReadIdx, bytesToRead);
     BlockDevice->PreadAsync(data, bytesToRead, readOffset, completion.Release(),
             read->ReqId, {});
     // TODO: align the data on SectorSize, not PAGE_SIZE
@@ -3205,6 +3209,9 @@ void TPDisk::ProcessChunkReadQueue() {
         processedCostMs += piece->GetCostMs();
         Y_VERIFY_S(!piece->SelfPointer, PCtx->PDiskLogPrefix);
         TIntrusivePtr<TChunkRead> &read = piece->ChunkRead;
+        Mon.JointChunkReadsWait.Increment(HPMilliSecondsFloat(HPNow() - piece->ScheduleTime));
+        LWTRACK(PDiskChunkReadPieceDequeued, read->Orbit, PCtx->PDiskId, read->ReqId.Id,
+                piece->PieceCurrentSector * Format.SectorSize, HPMilliSecondsFloat(HPNow() - piece->ScheduleTime));
         TReqId reqId = read->ReqId;
         ui32 chunkIdx = read->ChunkIdx;
         ui8 priorityClass = read->PriorityClass;
@@ -3884,6 +3891,8 @@ bool TPDisk::PreprocessRequest(TRequestBase *request) {
         {
             Mon.QueueRequests->Dec();
             TIntrusivePtr<TChunkRead> read = std::move(static_cast<TChunkRead*>(request)->SelfPointer);
+            LWTRACK(PDiskChunkReadInputDequeued, read->Orbit, PCtx->PDiskId, read->ReqId.Id,
+                    HPMilliSecondsFloat(HPNow() - read->InputTime));
             *Mon.QueueBytes -= read->Size;
 
             if (errStatus != NKikimrProto::OK) {
@@ -4375,6 +4384,7 @@ void TPDisk::PushRequestToScheduler(TRequestBase *request) {
             AddJobToScheduler(piece, request->JobKind);
             totalSectors -= jobSize;
         }
+        LWTRACK(PDiskChunkReadPiecesScheduled, read->Orbit, PCtx->PDiskId, read->ReqId.Id, jobCount);
         Y_VERIFY_S(totalSectors == 0, PCtx->PDiskLogPrefix << "totalSectors# " << totalSectors);
     } else {
         AddJobToScheduler(request, request->JobKind);
@@ -4487,6 +4497,7 @@ void TPDisk::RouteRequest(TRequestBase *request) {
         case ERequestType::RequestChunkReadPiece:
         {
             TChunkReadPiece *piece = static_cast<TChunkReadPiece*>(request);
+            piece->ScheduleTime = HPNow();
             JointChunkReads.emplace(piece->SelfPointer.Get());
             piece->SelfPointer.Reset();
             // FIXME(cthulhu): Unreserve() for TChunkReadPiece is called while processing to avoid requeueing issues
@@ -4603,6 +4614,7 @@ void TPDisk::EnqueueAll() {
 
     while (InputQueue.GetWaitingSize() > 0) {
         TRequestBase* request = InputQueue.Pop();
+        Mon.InputQueueWait.Increment(HPMilliSecondsFloat(HPNow() - request->InputTime));
 
         if (Cfg->ReadOnly && HandleReadOnlyIfWrite(request)) {
             YDB_LOG_DEBUG_CTX_COMP(*PCtx->ActorSystem, NKikimrServices::BS_PDISK, "Got write request in ReadOnly mode",
@@ -5662,6 +5674,7 @@ void TPDisk::Wakeup() {
 
 // Pushes request to the InputQueue; almost thread-safe
 void TPDisk::InputRequest(TRequestBase* request) {
+    request->InputTime = HPNow();
     bool isTrim = request->PriorityClass == NPriInternal::Trim;
     if (request->GateId != GateFastOperation) {
         ui64 timeout = 0;

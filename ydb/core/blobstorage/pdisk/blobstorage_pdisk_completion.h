@@ -13,6 +13,8 @@ struct TCompletionAction {
     ui64 OperationIdx;
     NHPTimer::STime SubmitTime;
     NHPTimer::STime GetTime;
+    NHPTimer::STime SubmitQueueTime = 0;
+    NHPTimer::STime DeviceSlotWaitStartTime = 0;
     TCompletionAction *FlushAction = nullptr;
     ui64 CostNs = 0;
     NWilson::TTraceId TraceId;

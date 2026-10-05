@@ -22,6 +22,9 @@ TBlobStorageQueue::TBlobStorageQueue(const TIntrusivePtr<::NMonitoring::TDynamic
     // use parent group visibility
     , QueueWaitingItems(counters->GetCounter("QueueWaitingItems", false, visibility))
     , QueueWaitingBytes(counters->GetCounter("QueueWaitingBytes", false, visibility))
+    , QueueWaitTimeMs(counters->GetHistogram("QueueWaitTimeMs",
+        NMonitoring::ExplicitHistogram({0.1, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096}),
+        true, visibility))
     , QueueInFlightItems(counters->GetCounter("QueueInFlightItems", false, visibility))
     , QueueInFlightBytes(counters->GetCounter("QueueInFlightBytes", false, visibility))
     , QueueInFlightCost(counters->GetCounter("QueueInFlightCost", false, visibility))
@@ -112,6 +115,7 @@ void TBlobStorageQueue::SetItemQueue(TItem& item, EItemQueue newQueue) {
             break;
 
         case EItemQueue::Waiting:
+            item.WaitingSinceSeconds = item.ProcessingTimer.Passed();
             ++*QueueWaitingItems;
             *QueueWaitingBytes += item.GetByteSize();
             BytesWaiting += item.GetByteSize();
@@ -238,6 +242,7 @@ void TBlobStorageQueue::SendToVDisk(const TActorContext& ctx, const TActorId& re
                 {"VDiskOrderNumber", vdiskOrderNumber}
             });
         }
+        QueueWaitTimeMs->Collect((item.ProcessingTimer.Passed() - item.WaitingSinceSeconds) * 1000);
         item.Event.SendToVDisk(ctx, remoteVDisk, item.QueueCookie, item.MsgId, item.SequenceId, sendMeCostSettings,
             item.Span.GetTraceId(), ClientId, item.ProcessingTimer);
 

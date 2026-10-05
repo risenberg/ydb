@@ -216,6 +216,7 @@ class TCompletionChunkRead : public TCompletionAction {
     TMutex CommonBufferMutex; // used to protect CommonBuffer when gaps are being add
     TAtomic PartsPending;
     TAtomic Deletes;
+    TAtomic DeviceReads = 0;
     std::function<void()> OnDestroy;
     ui64 ChunkNonce;
     NWilson::TSpan Span;
@@ -232,6 +233,14 @@ public:
 
     void AddPart() {
         AtomicIncrement(PartsPending);
+    }
+
+    ui64 RegisterDeviceRead() {
+        return AtomicIncrement(DeviceReads);
+    }
+
+    ui64 GetDeviceReadCount() const {
+        return AtomicGet(DeviceReads);
     }
 
     TBufferWithGaps *GetCommonBuffer() {

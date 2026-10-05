@@ -371,6 +371,10 @@ struct TPDiskMon {
     TIntrusivePtr<::NMonitoring::TDynamicCounters> QueueGroup;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueRequests;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueBytes;
+    TTimesHistogram InputQueueWait;
+    TTimesHistogram JointChunkReadsWait;
+    TTimesHistogram SubmitQueueWait;
+    TTimesHistogram DeviceSlotWait;
 
     // Update cycle time
     TUpdateDurationTracker UpdateDurationTracker;

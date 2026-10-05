@@ -298,6 +298,8 @@ void TCompletionChunkReadPart::Exec(TActorSystem *actorSystem) {
     double deviceTimeMs = HPMilliSecondsFloat(GetTime - SubmitTime);
     LWTRACK(PDiskChunkReadPieceComplete, Orbit, PDisk->PCtx->PDiskId, RawReadSize, CommonBufferOffset, deviceTimeMs);
     Read->Orbit.Join(Orbit);
+    LWTRACK(PDiskChunkReadDeviceReadCompleted, Read->Orbit, PDisk->PCtx->PDiskId, Read->ReqId.Id, RawReadSize,
+            deviceTimeMs, HPMilliSecondsFloat(HPNow() - GetTime));
     CumulativeCompletion->PartReadComplete(actorSystem);
     CumulativeCompletion = nullptr;
 
@@ -383,6 +385,7 @@ void TCompletionChunkRead::Exec(TActorSystem *actorSystem) {
 
     double responseTimeMs = HPMilliSecondsFloat(HPNow() - Read->CreationTime);
     PDisk->Mon.IncrementResponseTime(Read->PriorityClass, responseTimeMs, Read->Size);
+    LWTRACK(PDiskChunkReadSummary, Read->Orbit, PDisk->PCtx->PDiskId, Read->ReqId.Id, GetDeviceReadCount());
     LWTRACK(PDiskChunkResponseTime, Read->Orbit, PDisk->PCtx->PDiskId, Read->ReqId.Id, Read->PriorityClass, responseTimeMs,
             Read->Size);
 
