@@ -13,7 +13,7 @@ void TReadingAction::DoStartReading(THashSet<TBlobRange>&& ranges) {
         .WithDeadline = false };
     std::vector<TBlobRange> rangesLocal(ranges.begin(), ranges.end());
     TActorContext::AsActorContext().Send(
-        BlobCacheActorId, new NBlobCache::TEvBlobCache::TEvReadBlobRangeBatch(std::move(rangesLocal), std::move(readOpts)));
+        BlobCacheActorId, new NBlobCache::TEvBlobCache::TEvReadBlobRangeBatch(std::move(rangesLocal), std::move(readOpts), GetTraceOrbit()));
     YDB_LOG_DEBUG("",
         {"blobIds", JoinSeq(",", ranges)},
         {"count", ranges.size()});

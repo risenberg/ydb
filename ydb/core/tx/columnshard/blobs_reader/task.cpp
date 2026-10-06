@@ -41,6 +41,7 @@ bool ITask::AddError(const TString& storageIdExt, const TBlobRange& range, const
         }
     }
     if (!OnError(storageId, range, status)) {
+        JoinTraceOrbit();
         TaskFinishedWithError = true;
         return false;
     }
@@ -74,6 +75,13 @@ void ITask::AddData(const TString& storageIdExt, const TBlobRange& range, const 
         auto it = AgentsWaiting.find(storageId);
         AFL_VERIFY(it != AgentsWaiting.end())("storage_id", storageId);
         it->second->OnReadResult(range, data, fromCache);
+        if (fromCache) {
+            CacheBytes += range.Size;
+        } else if (storageId == IStoragesManager::DefaultStorageId) {
+            BsBytes += range.Size;
+        } else {
+            TierBytes += range.Size;
+        }
         if (it->second->IsFinished()) {
             AgentsWaiting.erase(it);
         }
@@ -124,6 +132,26 @@ ITask::ITask(const TReadActionsCollection& actions, const TString& taskCustomer,
     }
 }
 
+void ITask::ForkTraceOrbit(NLWTrace::TOrbit& orbit) {
+    if (!orbit.HasShuttles()) {
+        return;
+    }
+    TraceParent = &orbit;
+    for (auto&& [_, action] : Agents) {
+        orbit.Fork(action->MutableTraceOrbit());
+    }
+}
+
+void ITask::JoinTraceOrbit() {
+    if (!TraceParent) {
+        return;
+    }
+    for (auto&& [_, action] : Agents) {
+        TraceParent->Join(action->MutableTraceOrbit());
+    }
+    TraceParent = nullptr;
+}
+
 TString ITask::DebugString() const {
     TStringBuilder sb;
     if (TaskFinishedWithError) {
@@ -141,6 +169,7 @@ void ITask::OnDataReady() {
         {"externalTaskId", ExternalTaskId});
     Y_ABORT_UNLESS(!DataIsReadyFlag);
     DataIsReadyFlag = true;
+    JoinTraceOrbit();
     DoOnDataReady(ResourcesGuard);
 }
 

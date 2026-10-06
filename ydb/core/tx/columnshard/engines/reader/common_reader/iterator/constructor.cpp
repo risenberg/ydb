@@ -47,6 +47,7 @@ TBlobsFetcherTask::TBlobsFetcherTask(const std::vector<std::shared_ptr<IBlobsRea
     , Context(SourceLease->GetSource().GetContext())
     , Guard(Context->GetCommonContext()->GetCounters().GetFetchBlobsGuard())
 {
+    ForkTraceOrbit(SourceLease->GetSource().GetDataSourceOrbit());
     FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, SourceLease->GetSource().AddEvent("sbf"));
 }
 
@@ -74,6 +75,7 @@ void TColumnsFetcherTask::DoOnDataReady(const std::shared_ptr<NResourceBroker::N
     auto& source = SourceLease->GetSource();
     FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, source.AddEvent("cf_reply"));
     const TMonotonic start = TMonotonic::Now();
+    source.AddPendingFetchOriginalDataIoBytes(GetCacheBytes(), GetBsBytes(), GetTierBytes());
     NBlobOperations::NRead::TCompositeReadBlobs blobsData = ExtractBlobsData();
     blobsData.Merge(std::move(ProvidedBlobs));
     TReadActionsCollection readActions;

@@ -81,6 +81,18 @@ TStepAction::TStepAction(std::unique_ptr<TDataSourceLease> sourceLease, TFetchin
     }
 }
 
+void TProgramStep::FlushPendingFetchOriginalData(IDataSource& source) const {
+    auto pending = source.ExtractPendingFetchOriginalDataProbe();
+    if (!pending) {
+        return;
+    }
+    const TDuration duration = pending->Duration + source.GetAndResetWaitDuration();
+    LWTRACK(ProgramFetchOriginalData, source.GetDataSourceOrbit(), source.GetRawPathId(), source.GetTabletId(), source.GetTxId(),
+        source.GetSourceId(), source.GetExecutionContext().GetCursorStep().GetStepIndex(), pending->TracingName, pending->NodeId, duration,
+        pending->ExecutionDuration, pending->RowsCount, pending->BlobBytes, pending->RawBytes, pending->CacheBytes, pending->BsBytes,
+        pending->TierBytes, pending->ReservedMemory, pending->ExecutionResult, pending->Details);
+}
+
 void TProgramStep::ReportTracing(IDataSource& source, const NArrow::NAccessor::TAccessorsCollection& resources,
     const TDuration executionDurationMs, const TString& currentExecutionResult, const ui32 nodeId, const TString& currentCategoryName,
     const std::shared_ptr<NArrow::NSSA::IResourceProcessor>& processor) const {
@@ -217,7 +229,18 @@ void TProgramStep::ReportTracing(IDataSource& source, const NArrow::NAccessor::T
                     source.AddBytesRead(blobBytes);
                 }
             }
-            LWTRACK(ProgramFetchOriginalData, PROGRAM_PROBE_ARGS, blobBytes, rawBytes, PROGRAM_PROBE_RESERVED, PROGRAM_PROBE_TAIL);
+            TFetchOriginalDataProbeState state;
+            state.NodeId = nodeId;
+            state.TracingName = tracingName;
+            state.Duration = finishDurationMs;
+            state.ExecutionDuration = executionDurationMs;
+            state.RowsCount = filteredRows;
+            state.BlobBytes = blobBytes;
+            state.RawBytes = rawBytes;
+            state.ReservedMemory = reservedMemory;
+            state.ExecutionResult = tracingExecutionResult;
+            state.Details = details;
+            source.SetPendingFetchOriginalDataProbe(std::move(state));
         } break;
         case NArrow::NSSA::EProcessorType::AssembleOriginalData:
             LWTRACK(ProgramAssembleOriginalData, PROGRAM_PROBE_ARGS, PROGRAM_PROBE_RESERVED, PROGRAM_PROBE_TAIL);
@@ -245,6 +268,7 @@ void TProgramStep::ReportTracing(IDataSource& source, const NArrow::NAccessor::T
 TConclusion<TExecutionResult> TProgramStep::DoExecuteInplace(IDataSource& source, const TFetchingScriptCursor& step) const {
     auto& executionContext = source.MutableExecutionContext();
     if (executionContext.HasProgramIterator()) {
+        FlushPendingFetchOriginalData(source);
         executionContext.GetProgramIteratorVerified()->Next();
         executionContext.OnFinishProgramStepExecution();
     } else {
@@ -283,6 +307,9 @@ TConclusion<TExecutionResult> TProgramStep::DoExecuteInplace(IDataSource& source
 
         const TString executionResult = conclusion.IsFail() ? "Fail" : conclusion->DebugString();
         ReportTracing(source, visitor->MutableContext().GetResources(), executionDuration, executionResult, nodeId, categoryName, processor);
+        if (conclusion.IsFail() || !conclusion->IsPending()) {
+            FlushPendingFetchOriginalData(source);
+        }
         executionContext.SetPrevNodeTracing(categoryName, executionResult);
         if (conclusion.IsFail()) {
             executionContext.OnFailedProgramStepExecution();

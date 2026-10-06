@@ -1116,6 +1116,8 @@ struct TEvChunkRead : TEventLocal<TEvChunkRead, TEvBlobStorage::EvChunkRead> {
     void *Cookie;
     TLogoBlobID BlobId; // when set, this blob id is used to salt sector hash
 
+    mutable NLWTrace::TOrbit Orbit;
+
     TEvChunkRead(TOwner owner, TOwnerRound ownerRound, TChunkIdx chunkIdx, ui32 offset, ui32 size,
             ui8 priorityClass, void *cookie)
         : ChunkIdx(chunkIdx)
@@ -1153,6 +1155,8 @@ struct TEvChunkReadResult : TEventLocal<TEvChunkReadResult, TEvBlobStorage::EvCh
     void *Cookie;
     TStatusFlags StatusFlags;
     TString ErrorReason;
+
+    mutable NLWTrace::TOrbit Orbit;
 
     TEvChunkReadResult(NKikimrProto::EReplyStatus status, TChunkIdx chunkIdx, ui32 offset, void *cookie,
                         TStatusFlags statusFlags, TString errorReason)

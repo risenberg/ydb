@@ -11,6 +11,7 @@
 #include <ydb/library/actors/core/actorsystem.h>
 #include <ydb/library/actors/core/event_local.h>
 
+#include <library/cpp/lwtrace/shuttle.h>
 #include <library/cpp/monlib/dynamic_counters/counters.h>
 #include <util/generic/vector.h>
 
@@ -77,10 +78,13 @@ struct TEvBlobCache {
     struct TEvReadBlobRangeBatch: public NActors::TEventLocal<TEvReadBlobRangeBatch, EvReadBlobRangeBatch> {
         std::vector<TBlobRange> BlobRanges;
         TReadBlobRangeOptions ReadOptions;
+        std::shared_ptr<NLWTrace::TOrbit> TraceOrbit;
 
-        explicit TEvReadBlobRangeBatch(std::vector<TBlobRange>&& blobRanges, TReadBlobRangeOptions&& opts)
+        explicit TEvReadBlobRangeBatch(
+            std::vector<TBlobRange>&& blobRanges, TReadBlobRangeOptions&& opts, std::shared_ptr<NLWTrace::TOrbit> traceOrbit)
             : BlobRanges(std::move(blobRanges))
             , ReadOptions(std::move(opts))
+            , TraceOrbit(std::move(traceOrbit))
         {
         }
     };

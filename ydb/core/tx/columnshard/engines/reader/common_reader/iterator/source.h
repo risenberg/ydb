@@ -21,6 +21,8 @@
 
 #include <library/cpp/lwtrace/shuttle.h>
 #include <util/string/join.h>
+#include <util/system/guard.h>
+#include <util/system/mutex.h>
 
 namespace NKikimr::NOlap {
 class IDataReader;
@@ -32,6 +34,22 @@ using TPKSortPermutation = std::vector<ui64>;
 
 class TFetchingScriptCursor;
 class TDataSourceLease;
+
+struct TFetchOriginalDataProbeState {
+    ui32 NodeId = 0;
+    TString TracingName;
+    TDuration Duration;
+    TDuration ExecutionDuration;
+    ui32 RowsCount = 0;
+    ui64 BlobBytes = 0;
+    ui64 RawBytes = 0;
+    ui64 CacheBytes = 0;
+    ui64 BsBytes = 0;
+    ui64 TierBytes = 0;
+    ui64 ReservedMemory = 0;
+    TString ExecutionResult;
+    TString Details;
+};
 
 class TExecutionContext {
 private:
@@ -159,6 +177,8 @@ private:
     std::optional<NEvLog::TLogsThread> Events;
     std::unique_ptr<TFetchedData> StageData;
     std::shared_ptr<TPortionDataAccessor> Accessor;
+    TMutex PendingFetchOriginalDataProbeLock;
+    std::optional<TFetchOriginalDataProbeState> PendingFetchOriginalDataProbe;
 
 protected:
     std::vector<std::shared_ptr<NGroupedMemoryManager::TAllocationGuard>> ResourceGuards;
@@ -173,6 +193,28 @@ protected:
     virtual ui32 GetRecordsCountVirtual() const;
 
 public:
+    void SetPendingFetchOriginalDataProbe(TFetchOriginalDataProbeState state) {
+        TGuard<TMutex> guard(PendingFetchOriginalDataProbeLock);
+        AFL_VERIFY(!PendingFetchOriginalDataProbe);
+        PendingFetchOriginalDataProbe = std::move(state);
+    }
+
+    void AddPendingFetchOriginalDataIoBytes(const ui64 cacheBytes, const ui64 bsBytes, const ui64 tierBytes) {
+        TGuard<TMutex> guard(PendingFetchOriginalDataProbeLock);
+        if (PendingFetchOriginalDataProbe) {
+            PendingFetchOriginalDataProbe->CacheBytes += cacheBytes;
+            PendingFetchOriginalDataProbe->BsBytes += bsBytes;
+            PendingFetchOriginalDataProbe->TierBytes += tierBytes;
+        }
+    }
+
+    std::optional<TFetchOriginalDataProbeState> ExtractPendingFetchOriginalDataProbe() {
+        TGuard<TMutex> guard(PendingFetchOriginalDataProbeLock);
+        auto result = std::move(PendingFetchOriginalDataProbe);
+        PendingFetchOriginalDataProbe.reset();
+        return result;
+    }
+
     ui64 GetReservedMemory() const;
 
     TDuration GetAndResetWaitDuration() {

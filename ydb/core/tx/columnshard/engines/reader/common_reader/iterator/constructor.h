@@ -130,6 +130,7 @@ public:
         , Cursor(cursor)
         , Guard(SourceLease->GetSource().GetContext()->GetCommonContext()->GetCounters().GetFetchBlobsGuard())
     {
+        ForkTraceOrbit(SourceLease->GetSource().GetDataSourceOrbit());
         FOR_DEBUG_LOG(NKikimrServices::COLUMNSHARD_SCAN_EVLOG, SourceLease->GetSource().AddEvent("scf"));
     }
 };
