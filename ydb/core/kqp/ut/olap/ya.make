@@ -26,9 +26,13 @@ SRCS(
 
 PEERDIR(
     ydb/core/kqp
+    ydb/core/kqp/opt/logical
+    ydb/core/kqp/opt/physical
     ydb/core/kqp/ut/common
     ydb/core/protos
     yql/essentials/sql/pg_dummy
+    yql/essentials/ast
+    yql/essentials/core
     ydb/core/tx/columnshard/hooks/testing
     ydb/core/tx/columnshard/test_helper
     ydb/core/tx/columnshard
