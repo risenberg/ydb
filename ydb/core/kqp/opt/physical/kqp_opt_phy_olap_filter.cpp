@@ -5,6 +5,7 @@
 #include <ydb/core/kqp/common/kqp_yql.h>
 #include <ydb/core/kqp/opt/kqp_opt.h>
 #include <ydb/core/kqp/provider/yql_kikimr_settings.h>
+#include <ydb/library/yql/dq/expr_nodes/dq_expr_nodes.h>
 
 #include <yql/essentials/core/yql_expr_optimize.h>
 #include <yql/essentials/core/yql_expr_type_annotation.h>
@@ -16,6 +17,7 @@
 namespace NKikimr::NKqp::NOpt {
 
 using namespace NYql;
+using namespace NYql::NDq;
 using namespace NYql::NNodes;
 
 namespace {
@@ -972,7 +974,7 @@ bool CollectOlapOperationForAliasProjection(const TCoAtom& aliasAtom, const TExp
     const TString sourceColumn(maybeMember.Cast().Name().StringValue());
     const bool aliasIsForcedDistinctKey = forceDistinctKey && *forceDistinctKey == alias;
     const bool sourceStillNeededByPredicate = predicateMembers.contains(sourceColumn);
-    if (!aliasIsForcedDistinctKey && !sourceStillNeededByPredicate) {
+    if (!aliasIsForcedDistinctKey && !sourceStillNeededByPredicate && !alias.StartsWith(KqpJoinJsonValueColumnName)) {
         return false;
     }
     // Alias must be a fresh column: not a stored column and not an already emitted projection.
@@ -1321,10 +1323,10 @@ TExprBase KqpPushOlapProjections(TExprBase node, TExprContext& ctx, const TKqpOp
     return newFlatmap;
 }
 
+
 TExprBase KqpPushOlapFilter(TExprBase node, TExprContext& ctx, const TKqpOptimizeContext& kqpCtx, TTypeAnnotationContext& typesCtx) {
     const TPushdownOptions pushdownOptions(kqpCtx.Config->GetEnableOlapScalarApply(), kqpCtx.Config->GetEnableOlapSubstringPushdown(),
-        /*stripAliasPrefixFromColName=*/false, kqpCtx.Config->GetEnableOlapPushdownRegexp(),
-        kqpCtx.Config->GetEnableOlapFastAsciiIgnoreCase());
+        /*stripAliasPrefixFromColName=*/false, kqpCtx.Config->GetEnableOlapPushdownRegexp(), kqpCtx.Config->GetEnableOlapFastAsciiIgnoreCase());
     if (!kqpCtx.Config->HasOptEnableOlapPushdown()) {
         return node;
     }
