@@ -172,9 +172,28 @@ TPDiskMon::TPDiskMon(const TIntrusivePtr<::NMonitoring::TDynamicCounters>& count
     HISTOGRAM_INIT(DeviceFlushDuration, deviceFlushDuration);
     HISTOGRAM_INIT(InputQueueWait, inputQueueWait);
     HISTOGRAM_INIT(ForsetiWait, forsetiWait);
+    HISTOGRAM_INIT(UpdateDurationTracker.InputPhaseWall, pdiskInputPhaseWall);
+    HISTOGRAM_INIT(UpdateDurationTracker.InputPhaseCpu, pdiskInputPhaseCpu);
+    HISTOGRAM_INIT(UpdateDurationTracker.SchedulingPhaseWall, pdiskSchedulingPhaseWall);
+    HISTOGRAM_INIT(UpdateDurationTracker.SchedulingPhaseCpu, pdiskSchedulingPhaseCpu);
+    HISTOGRAM_INIT(UpdateDurationTracker.ProcessingPhaseWall, pdiskProcessingPhaseWall);
+    HISTOGRAM_INIT(UpdateDurationTracker.ProcessingPhaseCpu, pdiskProcessingPhaseCpu);
     HISTOGRAM_INIT(JointChunkReadsWait, jointChunkReadsWait);
     HISTOGRAM_INIT(SubmitQueueWait, submitQueueWait);
     HISTOGRAM_INIT(DeviceSlotWait, deviceSlotWait);
+
+    const std::array<const char*, ForsetiGateCount> gateNames = {
+        "Log", "Fresh", "Comp", "FastRead", "OtherRead", "Load",
+        "HugeAsync", "HugeUser", "SyncLog", "Trim", "FastOperation", "LowRead"};
+    const TVector<double> queueDepthBounds = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+    for (size_t gate = 0; gate < ForsetiGateCount; ++gate) {
+        auto gateGroup = SchedulerGroup->GetSubgroup("gate", gateNames[gate]);
+        ForsetiGateWait[gate].Initialize(gateGroup, "forsetiWait", deviceType);
+        ForsetiGateQueueDepth[gate] = gateGroup->GetNamedHistogram("sensor", "forsetiQueueDepthAtEnqueue",
+                                                                   NMonitoring::ExplicitHistogram(queueDepthBounds));
+        ForsetiGatePendingJobs[gate] = gateGroup->GetCounter("ForsetiPendingJobs", false);
+        ForsetiGateRouted[gate] = gateGroup->GetCounter("ForsetiRouted", true);
+    }
 
     TRACKER_INIT_IF_EXTENDED(LogQueueTime, logQueueTime, Time in millisec);
     TRACKER_INIT_IF_EXTENDED(GetQueueSyncLog, getQueueSyncLog, Time in millisec);

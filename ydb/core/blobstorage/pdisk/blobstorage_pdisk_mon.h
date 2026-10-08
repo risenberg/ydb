@@ -1,6 +1,7 @@
 #pragma once
 
 #include "blobstorage_pdisk_device_overestimation.h"
+#include "blobstorage_pdisk_gate.h"
 
 #include <ydb/core/blobstorage/base/common_latency_hist_bounds.h>
 #include <ydb/core/blobstorage/lwtrace_probes/blobstorage_probes.h>
@@ -16,6 +17,8 @@
 #include <library/cpp/monlib/dynamic_counters/counters.h>
 #include <library/cpp/monlib/dynamic_counters/percentile/percentile_lg.h>
 #include <util/generic/vector.h>
+#include <util/system/datetime.h>
+#include <array>
 #include <atomic>
 #include <memory>
 
@@ -187,6 +190,10 @@ struct TPDiskMon {
         NHPTimer::STime SchedulingStartAt = 0;
         NHPTimer::STime ProcessingStartAt = 0;
         NHPTimer::STime WaitingStartAt = 0;
+        NHPTimer::STime PhaseBeginAt = 0;
+        ui64 PhaseBeginCpuUs = 0;
+        ui64 SchedulingStartCpuUs = 0;
+        ui64 ProcessingStartCpuUs = 0;
 
         ::NMonitoring::TDynamicCounters::TCounterPtr PDiskThreadBusyTimeNs;
 
@@ -194,6 +201,12 @@ struct TPDiskMon {
 
     public:
         NMonitoring::TPercentileTrackerLg<5, 4, 15> UpdateCycleTime;
+        TTimesHistogram InputPhaseWall;
+        TTimesHistogram InputPhaseCpu;
+        TTimesHistogram SchedulingPhaseWall;
+        TTimesHistogram SchedulingPhaseCpu;
+        TTimesHistogram ProcessingPhaseWall;
+        TTimesHistogram ProcessingPhaseCpu;
 
     public:
         TUpdateDurationTracker()
@@ -211,22 +224,29 @@ struct TPDiskMon {
         void UpdateStarted() {
             // BeginUpdateAt is set on the end of previous update cycle
             IsLwProbeEnabled = GLOBAL_LWPROBE_ENABLED(BLOBSTORAGE_PROVIDER, PDiskUpdateCycleDetails);
+            PhaseBeginAt = HPNow();
+            PhaseBeginCpuUs = ThreadCPUTime();
         }
 
         void SchedulingStart() {
-            if (IsLwProbeEnabled) {
-                SchedulingStartAt = HPNow();
-            }
+            SchedulingStartAt = HPNow();
+            SchedulingStartCpuUs = ThreadCPUTime();
+            InputPhaseWall.Increment(HPMilliSecondsFloat(SchedulingStartAt - PhaseBeginAt));
+            InputPhaseCpu.Increment(TDuration::MicroSeconds(SchedulingStartCpuUs - PhaseBeginCpuUs).MillisecondsFloat());
         }
 
         void ProcessingStart() {
-            if (IsLwProbeEnabled) {
-                ProcessingStartAt = HPNow();
-            }
+            ProcessingStartAt = HPNow();
+            ProcessingStartCpuUs = ThreadCPUTime();
+            SchedulingPhaseWall.Increment(HPMilliSecondsFloat(ProcessingStartAt - SchedulingStartAt));
+            SchedulingPhaseCpu.Increment(TDuration::MicroSeconds(ProcessingStartCpuUs - SchedulingStartCpuUs).MillisecondsFloat());
         }
 
         void WaitingStart(bool isNothingToDo) {
             const auto now = HPNow();
+            const auto cpuUs = ThreadCPUTime();
+            ProcessingPhaseWall.Increment(HPMilliSecondsFloat(now - ProcessingStartAt));
+            ProcessingPhaseCpu.Increment(TDuration::MicroSeconds(cpuUs - ProcessingStartCpuUs).MillisecondsFloat());
             if (PDiskThreadBusyTimeNs) {
                 *PDiskThreadBusyTimeNs += HPNanoSeconds(now - BeginUpdateAt);
             }
@@ -373,6 +393,11 @@ struct TPDiskMon {
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueBytes;
     TTimesHistogram InputQueueWait;
     TTimesHistogram ForsetiWait;
+    static constexpr size_t ForsetiGateCount = NPDisk::GateLow + 1;
+    std::array<TTimesHistogram, ForsetiGateCount> ForsetiGateWait;
+    std::array<NMonitoring::THistogramPtr, ForsetiGateCount> ForsetiGateQueueDepth;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGatePendingJobs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateRouted;
     TTimesHistogram JointChunkReadsWait;
     TTimesHistogram SubmitQueueWait;
     TTimesHistogram DeviceSlotWait;
