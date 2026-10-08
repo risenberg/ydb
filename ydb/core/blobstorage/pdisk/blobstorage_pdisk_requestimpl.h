@@ -55,6 +55,7 @@ public:
     // Monitoring
     const NHPTimer::STime CreationTime;
     NHPTimer::STime InputTime = 0; // Time of entrance to rt-scheduler
+    NHPTimer::STime ForsetiEnqueueTime = 0;
     NHPTimer::STime ScheduleTime = 0;
 
     // Tracing
