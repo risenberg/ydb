@@ -4463,6 +4463,7 @@ void TPDisk::AddJobToScheduler(TRequestBase *request, NSchLab::EJobKind jobKind)
     job->Payload = request;
     job->Cost = request->Cost;
     job->JobKind = jobKind;
+    request->ForsetiEnqueueTime = HPNow();
     ForsetiTimeNs++;
     ForsetiScheduler.AddJob(cbs, job, request->Owner, request->GateId, ForsetiTimeNs);
     YDB_LOG_P_LOG(PRI_DEBUG, "Add job to scheduler",
@@ -4476,6 +4477,10 @@ void TPDisk::AddJobToScheduler(TRequestBase *request, NSchLab::EJobKind jobKind)
 }
 
 void TPDisk::RouteRequest(TRequestBase *request) {
+    if (request->ForsetiEnqueueTime) {
+        Mon.ForsetiWait.Increment(HPMilliSecondsFloat(HPNow() - request->ForsetiEnqueueTime));
+        request->ForsetiEnqueueTime = 0;
+    }
     YDB_LOG_DEBUG_CTX_COMP(*PCtx->ActorSystem, NKikimrServices::BS_PDISK, "RouteRequest",
         {"PDiskId", (ui32)PCtx->PDiskId},
         {"reqId", (ui64)request->ReqId.Id},

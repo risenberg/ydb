@@ -372,6 +372,7 @@ struct TPDiskMon {
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueRequests;
     ::NMonitoring::TDynamicCounters::TCounterPtr QueueBytes;
     TTimesHistogram InputQueueWait;
+    TTimesHistogram ForsetiWait;
     TTimesHistogram JointChunkReadsWait;
     TTimesHistogram SubmitQueueWait;
     TTimesHistogram DeviceSlotWait;

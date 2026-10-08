@@ -171,6 +171,7 @@ TPDiskMon::TPDiskMon(const TIntrusivePtr<::NMonitoring::TDynamicCounters>& count
     HISTOGRAM_INIT(DeviceTrimDuration, deviceTrimDuration);
     HISTOGRAM_INIT(DeviceFlushDuration, deviceFlushDuration);
     HISTOGRAM_INIT(InputQueueWait, inputQueueWait);
+    HISTOGRAM_INIT(ForsetiWait, forsetiWait);
     HISTOGRAM_INIT(JointChunkReadsWait, jointChunkReadsWait);
     HISTOGRAM_INIT(SubmitQueueWait, submitQueueWait);
     HISTOGRAM_INIT(DeviceSlotWait, deviceSlotWait);
