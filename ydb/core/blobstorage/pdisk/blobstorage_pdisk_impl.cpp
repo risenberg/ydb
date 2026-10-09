@@ -3215,8 +3215,12 @@ void TPDisk::ProcessChunkReadQueue() {
         const double waitMs = HPMilliSecondsFloat(HPNow() - piece->ScheduleTime);
         Mon.JointChunkReadsWait.Increment(waitMs);
         Mon.JointChunkReadsWaitByGate[piece->GateId].Increment(waitMs);
+        if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+            LWPROBE(PDiskJointChunkReadsWaitOver512Ms, PCtx->PDiskId, read->ReqId.Id, piece->GateId,
+                piece->PieceCurrentSector * Format.SectorSize, waitMs, JointChunkReads.size());
+        }
         LWTRACK(PDiskChunkReadPieceDequeued, read->Orbit, PCtx->PDiskId, read->ReqId.Id,
-                piece->PieceCurrentSector * Format.SectorSize, HPMilliSecondsFloat(HPNow() - piece->ScheduleTime));
+                piece->PieceCurrentSector * Format.SectorSize, waitMs);
         TReqId reqId = read->ReqId;
         ui32 chunkIdx = read->ChunkIdx;
         ui8 priorityClass = read->PriorityClass;
@@ -4497,6 +4501,9 @@ void TPDisk::RouteRequest(TRequestBase *request) {
         const auto waitMs = HPMilliSecondsFloat(HPNow() - request->ForsetiEnqueueTime);
         Mon.ForsetiWait.Increment(waitMs);
         Mon.ForsetiGateWait[request->GateId].Increment(waitMs);
+        if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+            LWPROBE(PDiskForsetiWaitOver512Ms, PCtx->PDiskId, request->ReqId.Id, request->GateId, waitMs);
+        }
         Mon.ForsetiGatePendingJobs[request->GateId]->Dec();
         Mon.ForsetiGateRouted[request->GateId]->Inc();
         request->ForsetiEnqueueTime = 0;
@@ -4641,7 +4648,12 @@ void TPDisk::EnqueueAll() {
 
     while (InputQueue.GetWaitingSize() > 0) {
         TRequestBase* request = InputQueue.Pop();
-        Mon.InputQueueWait.Increment(HPMilliSecondsFloat(HPNow() - request->InputTime));
+        const double waitMs = HPMilliSecondsFloat(HPNow() - request->InputTime);
+        Mon.InputQueueWait.Increment(waitMs);
+        if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+            LWPROBE(PDiskInputQueueWaitOver512Ms, PCtx->PDiskId, request->ReqId.Id, waitMs,
+                InputQueue.GetWaitingSize());
+        }
 
         if (Cfg->ReadOnly && HandleReadOnlyIfWrite(request)) {
             YDB_LOG_DEBUG_CTX_COMP(*PCtx->ActorSystem, NKikimrServices::BS_PDISK, "Got write request in ReadOnly mode",

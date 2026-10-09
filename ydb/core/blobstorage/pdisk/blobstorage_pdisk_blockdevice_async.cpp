@@ -267,6 +267,8 @@ class TRealBlockDevice : public IBlockDevice {
                 return;
             }
             ui64 size = op->GetSize();
+            const ui64 reqId = op->GetReqId().Id;
+            const bool isRead = op->GetType() == IAsyncIoOperation::EType::PRead;
             TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
             action->SubmitQueueTime = HPNow();
             OperationsToBeSubmit.Push(op);
@@ -276,8 +278,13 @@ class TRealBlockDevice : public IBlockDevice {
                 while (AtomicGet(SubmitInFlightBytes) > SubmitInFlightBytesMax) {
                     if (SubmitCondVar.WaitT(SubmitMtx, TDuration::Seconds(1))) {
                         const auto wait = HPNow() - start;
-                        Device.Mon.SubmitCallerBackpressureWait.Increment(HPMilliSecondsFloat(wait));
+                        const double waitMs = HPMilliSecondsFloat(wait);
+                        Device.Mon.SubmitCallerBackpressureWait.Increment(waitMs);
                         Device.Mon.SubmitCallerBackpressureWaitNs->Add(HPNanoSeconds(wait));
+                        if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+                            LWPROBE(PDiskSubmitBackpressureWaitOver512Ms, Device.GetPDiskId(), reqId,
+                                isRead, size, waitMs);
+                        }
                         return;
                     } else {
                         YDB_LOG_P_LOG(PRI_WARN, "Exceed 1 second deadline in SubmitThreadQueue",
@@ -290,8 +297,13 @@ class TRealBlockDevice : public IBlockDevice {
                     }
                 }
                 const auto wait = HPNow() - start;
-                Device.Mon.SubmitCallerBackpressureWait.Increment(HPMilliSecondsFloat(wait));
+                const double waitMs = HPMilliSecondsFloat(wait);
+                Device.Mon.SubmitCallerBackpressureWait.Increment(waitMs);
                 Device.Mon.SubmitCallerBackpressureWaitNs->Add(HPNanoSeconds(wait));
+                if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+                    LWPROBE(PDiskSubmitBackpressureWaitOver512Ms, Device.GetPDiskId(), reqId,
+                        isRead, size, waitMs);
+                }
             }
         }
 
@@ -299,9 +311,24 @@ class TRealBlockDevice : public IBlockDevice {
             TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
             if (action->SubmitQueueTime) {
                 auto now = HPNow();
-                Device.Mon.SubmitQueueWait.Increment(HPMilliSecondsFloat(now - action->SubmitQueueTime));
+                const double waitMs = HPMilliSecondsFloat(now - action->SubmitQueueTime);
+                Device.Mon.SubmitQueueWait.Increment(waitMs);
+                if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+                    LWPROBE(PDiskSubmitQueueWaitOver512Ms, Device.GetPDiskId(), op->GetReqId().Id,
+                        op->GetType() == IAsyncIoOperation::EType::PRead, op->GetSize(), waitMs);
+                }
                 action->DeviceSlotWaitStartTime = now;
                 action->SubmitQueueTime = 0;
+            }
+        }
+
+        void FinishDeviceSlotWait(IAsyncIoOperation *op) {
+            TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
+            const double waitMs = HPMilliSecondsFloat(HPNow() - action->DeviceSlotWaitStartTime);
+            Device.Mon.DeviceSlotWait.Increment(waitMs);
+            if (waitMs > PDiskQueueWaitTraceThresholdMs) {
+                LWPROBE(PDiskDeviceSlotWaitOver512Ms, Device.GetPDiskId(), op->GetReqId().Id,
+                    op->GetType() == IAsyncIoOperation::EType::PRead, op->GetSize(), waitMs);
             }
         }
     };
@@ -344,7 +371,7 @@ class TRealBlockDevice : public IBlockDevice {
 
             double blockedMs = 0;
             action->OperationIdx = Device.FlightControl.Schedule(blockedMs, opSize);
-            Device.Mon.DeviceSlotWait.Increment(HPMilliSecondsFloat(HPNow() - action->DeviceSlotWaitStartTime));
+            FinishDeviceSlotWait(op);
 
             *Device.Mon.DeviceWaitTimeMs += blockedMs;
 
@@ -752,7 +779,7 @@ class TRealBlockDevice : public IBlockDevice {
                 }
                 return false;
             }
-            Device.Mon.DeviceSlotWait.Increment(HPMilliSecondsFloat(HPNow() - action->DeviceSlotWaitStartTime));
+            FinishDeviceSlotWait(op);
 
             if (OpScheduleFailedTime != 0) {
                 // Scheduling failed previously, calculate how much time operation had to wait for scheduling.

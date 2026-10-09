@@ -227,6 +227,30 @@ struct TEventTypeField {
     PROBE(PDiskChunkReadPieceDequeued, GROUPS("PDisk", "PDiskRequest"), \
       TYPES(TPDiskIdField, ui64, ui64, double), \
       NAMES("pdisk", "reqId", "offset", "jointQueueWaitMs")) \
+    PROBE(PDiskInputQueueWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, double, ui64), \
+      NAMES("pdisk", "reqId", "waitMs", "queueDepth")) \
+    PROBE(PDiskForsetiWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, ui8, double), \
+      NAMES("pdisk", "reqId", "gate", "waitMs")) \
+    PROBE(PDiskJointChunkReadsWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, ui8, ui64, double, ui64), \
+      NAMES("pdisk", "reqId", "gate", "offset", "waitMs", "queueDepth")) \
+    PROBE(PDiskSubmitQueueWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, bool, ui64, double), \
+      NAMES("pdisk", "reqId", "isRead", "sizeBytes", "waitMs")) \
+    PROBE(PDiskSubmitBackpressureWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, bool, ui64, double), \
+      NAMES("pdisk", "reqId", "isRead", "sizeBytes", "waitMs")) \
+    PROBE(PDiskDeviceSlotWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, bool, ui64, double), \
+      NAMES("pdisk", "reqId", "isRead", "sizeBytes", "waitMs")) \
+    PROBE(PDiskReadCompletionQueueWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, ui64, double, ui32), \
+      NAMES("pdisk", "reqId", "sizeBytes", "waitMs", "queueDepth")) \
+    PROBE(PDiskReadCompletionDispatchWaitOver512Ms, GROUPS("PDisk", "PDiskQueueWait"), \
+      TYPES(TPDiskIdField, ui64, ui64, double), \
+      NAMES("pdisk", "reqId", "sizeBytes", "waitMs")) \
     PROBE(PDiskChunkReadDeviceReadSent, GROUPS("PDisk", "PDiskRequest"), \
       TYPES(TPDiskIdField, ui64, ui64, ui64), \
       NAMES("pdisk", "reqId", "deviceReadIdx", "size")) \

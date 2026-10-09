@@ -292,9 +292,19 @@ void TCompletionChunkReadPart::Exec(TActorSystem *actorSystem) {
 
     const auto completionStart = HPNow();
     PDisk->Mon.DeviceReadCompletionStartWait.Increment(HPMilliSecondsFloat(completionStart - GetTime));
-    PDisk->Mon.DeviceReadCompletionDispatchWait.Increment(HPMilliSecondsFloat(CompletionEnqueueTime - GetTime));
-    PDisk->Mon.DeviceReadCompletionQueueWait.Increment(HPMilliSecondsFloat(completionStart - CompletionEnqueueTime));
+    const double dispatchWaitMs = HPMilliSecondsFloat(CompletionEnqueueTime - GetTime);
+    PDisk->Mon.DeviceReadCompletionDispatchWait.Increment(dispatchWaitMs);
+    if (dispatchWaitMs > PDiskQueueWaitTraceThresholdMs) {
+        LWPROBE(PDiskReadCompletionDispatchWaitOver512Ms, PDisk->PCtx->PDiskId, Read->ReqId.Id,
+            RawReadSize, dispatchWaitMs);
+    }
+    const double queueWaitMs = HPMilliSecondsFloat(completionStart - CompletionEnqueueTime);
+    PDisk->Mon.DeviceReadCompletionQueueWait.Increment(queueWaitMs);
     PDisk->Mon.DeviceReadCompletionQueueDepth->Collect(CompletionQueueDepthAtEnqueue);
+    if (queueWaitMs > PDiskQueueWaitTraceThresholdMs) {
+        LWPROBE(PDiskReadCompletionQueueWaitOver512Ms, PDisk->PCtx->PDiskId, Read->ReqId.Id,
+            RawReadSize, queueWaitMs, CompletionQueueDepthAtEnqueue);
+    }
     if (Read->ChunkEncrypted) {
         Span.Event("PDisk.CompletionChunkReadPart.DecryptionStart");
         const auto decryptionStart = HPNow();

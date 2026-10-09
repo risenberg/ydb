@@ -27,6 +27,8 @@ namespace NKikimr {
 
 struct TPDiskConfig;
 
+constexpr double PDiskQueueWaitTraceThresholdMs = 512;
+
 class TBurstmeter {
 private:
     TBucketQuoter<i64, TSpinLock, THPTimerUs> Bucket;
