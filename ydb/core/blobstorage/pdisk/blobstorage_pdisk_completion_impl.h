@@ -217,11 +217,15 @@ class TCompletionChunkRead : public TCompletionAction {
     TAtomic PartsPending;
     TAtomic Deletes;
     TAtomic DeviceReads = 0;
+    TAtomic FirstPartSubmitTime = 0;
+    TAtomic LastPartDeviceDoneTime = 0;
+    TAtomic LastPartCompletionStartTime = 0;
     std::function<void()> OnDestroy;
     ui64 ChunkNonce;
     NWilson::TSpan Span;
 
     const ui64 DoubleFreeCanary;
+
 public:
     TCompletionChunkRead(TPDisk *pDisk, TIntrusivePtr<TChunkRead> &read, std::function<void()> onDestroy,
             ui64 chunkNonce, IRcBufAllocator* alloc);
@@ -241,6 +245,22 @@ public:
 
     ui64 GetDeviceReadCount() const {
         return AtomicGet(DeviceReads);
+    }
+
+    void RecordPartTimes(NHPTimer::STime submitTime, NHPTimer::STime deviceDoneTime, NHPTimer::STime completionStartTime) {
+        auto firstSubmit = AtomicGet(FirstPartSubmitTime);
+        while ((!firstSubmit || submitTime < firstSubmit) && !AtomicCas(&FirstPartSubmitTime, submitTime, firstSubmit)) {
+            firstSubmit = AtomicGet(FirstPartSubmitTime);
+        }
+        auto lastDeviceDone = AtomicGet(LastPartDeviceDoneTime);
+        while (deviceDoneTime > lastDeviceDone && !AtomicCas(&LastPartDeviceDoneTime, deviceDoneTime, lastDeviceDone)) {
+            lastDeviceDone = AtomicGet(LastPartDeviceDoneTime);
+        }
+        auto lastCompletionStart = AtomicGet(LastPartCompletionStartTime);
+        while (completionStartTime > lastCompletionStart &&
+                !AtomicCas(&LastPartCompletionStartTime, completionStartTime, lastCompletionStart)) {
+            lastCompletionStart = AtomicGet(LastPartCompletionStartTime);
+        }
     }
 
     TBufferWithGaps *GetCommonBuffer() {
@@ -286,6 +306,10 @@ public:
 
     bool CanHandleResult() const override {
         return true;
+    }
+
+    std::optional<ui8> GetSchedulerGate() const override {
+        return Read->GateId;
     }
 
     TBuffer *GetBuffer();

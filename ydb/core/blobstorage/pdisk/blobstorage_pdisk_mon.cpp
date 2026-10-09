@@ -167,6 +167,20 @@ TPDiskMon::TPDiskMon(const TIntrusivePtr<::NMonitoring::TDynamicCounters>& count
 
     HISTOGRAM_INIT(DeviceWritesSizes, deviceWritesSizes);
     HISTOGRAM_INIT(DeviceReadDuration, deviceReadDuration);
+    HISTOGRAM_INIT(DeviceReadCompletionStartWait, deviceReadCompletionStartWait);
+    HISTOGRAM_INIT(DeviceReadCompletionDispatchWait, deviceReadCompletionDispatchWait);
+    HISTOGRAM_INIT(DeviceReadCompletionQueueWait, deviceReadCompletionQueueWait);
+    HISTOGRAM_INIT(SlowSingleReadBeforeSubmit, slowSingleReadBeforeSubmit);
+    HISTOGRAM_INIT(SlowSingleReadDevice, slowSingleReadDevice);
+    HISTOGRAM_INIT(SlowSingleReadCompletionWait, slowSingleReadCompletionWait);
+    HISTOGRAM_INIT(SlowSingleReadAfterCompletionStart, slowSingleReadAfterCompletionStart);
+    HISTOGRAM_INIT(SlowMultiReadBeforeSubmit, slowMultiReadBeforeSubmit);
+    HISTOGRAM_INIT(SlowMultiReadDeviceWindow, slowMultiReadDeviceWindow);
+    HISTOGRAM_INIT(SlowMultiReadCompletionWait, slowMultiReadCompletionWait);
+    HISTOGRAM_INIT(SlowMultiReadAfterCompletionStart, slowMultiReadAfterCompletionStart);
+    COUNTER_INIT(DeviceGroup, SingleDeviceReadResponses, true);
+    COUNTER_INIT(DeviceGroup, MultiDeviceReadResponses, true);
+    HISTOGRAM_INIT(DeviceReadDecryptionDuration, deviceReadDecryptionDuration);
     HISTOGRAM_INIT(DeviceWriteDuration, deviceWriteDuration);
     HISTOGRAM_INIT(DeviceTrimDuration, deviceTrimDuration);
     HISTOGRAM_INIT(DeviceFlushDuration, deviceFlushDuration);
@@ -179,20 +193,59 @@ TPDiskMon::TPDiskMon(const TIntrusivePtr<::NMonitoring::TDynamicCounters>& count
     HISTOGRAM_INIT(UpdateDurationTracker.ProcessingPhaseWall, pdiskProcessingPhaseWall);
     HISTOGRAM_INIT(UpdateDurationTracker.ProcessingPhaseCpu, pdiskProcessingPhaseCpu);
     HISTOGRAM_INIT(JointChunkReadsWait, jointChunkReadsWait);
+    HISTOGRAM_INIT(JointChunkReadCycle, jointChunkReadCycle);
     HISTOGRAM_INIT(SubmitQueueWait, submitQueueWait);
+    HISTOGRAM_INIT(SubmitCallerBackpressureWait, submitCallerBackpressureWait);
     HISTOGRAM_INIT(DeviceSlotWait, deviceSlotWait);
+    COUNTER_INIT(QueueGroup, JointChunkReadPieces, true);
+    COUNTER_INIT(QueueGroup, JointChunkReadLimitWithBacklog, true);
+    COUNTER_INIT(DeviceGroup, SubmitCallerBackpressureWaitNs, true);
+
+    COUNTER_INIT(SchedulerGroup, ForsetiBatchLimitWithBacklog, true);
+    COUNTER_INIT(SchedulerGroup, ForsetiNoEligibleJobWithBacklog, true);
+    COUNTER_INIT(SchedulerGroup, ForsetiBackloggedBatchBudgetNs, true);
+    COUNTER_INIT(SchedulerGroup, ForsetiBackloggedBatchSelectedCostNs, true);
 
     const std::array<const char*, ForsetiGateCount> gateNames = {
         "Log", "Fresh", "Comp", "FastRead", "OtherRead", "Load",
         "HugeAsync", "HugeUser", "SyncLog", "Trim", "FastOperation", "LowRead"};
     const TVector<double> queueDepthBounds = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+    JointChunkReadDepthAtEnqueue = QueueGroup->GetNamedHistogram("sensor", "jointChunkReadDepthAtEnqueue",
+                                                                 NMonitoring::ExplicitHistogram(queueDepthBounds));
+    JointChunkReadDepthAtProcess = QueueGroup->GetNamedHistogram("sensor", "jointChunkReadDepthAtProcess",
+                                                                 NMonitoring::ExplicitHistogram(queueDepthBounds));
+    JointChunkReadPiecesPerCycle = QueueGroup->GetNamedHistogram("sensor", "jointChunkReadPiecesPerCycle",
+                                                                 NMonitoring::ExplicitHistogram(queueDepthBounds));
+    DeviceReadCompletionQueueDepth =
+        DeviceGroup->GetNamedHistogram("sensor", "deviceReadCompletionQueueDepth", NMonitoring::ExplicitHistogram(queueDepthBounds));
+    const TVector<double> queuedCostMsBounds = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768 };
     for (size_t gate = 0; gate < ForsetiGateCount; ++gate) {
         auto gateGroup = SchedulerGroup->GetSubgroup("gate", gateNames[gate]);
         ForsetiGateWait[gate].Initialize(gateGroup, "forsetiWait", deviceType);
+        JointChunkReadsWaitByGate[gate].Initialize(gateGroup, "jointChunkReadsWait", deviceType);
+        JointChunkReadEnqueuedByGate[gate] = gateGroup->GetCounter("JointChunkReadEnqueued", true);
         ForsetiGateQueueDepth[gate] = gateGroup->GetNamedHistogram("sensor", "forsetiQueueDepthAtEnqueue",
                                                                    NMonitoring::ExplicitHistogram(queueDepthBounds));
         ForsetiGatePendingJobs[gate] = gateGroup->GetCounter("ForsetiPendingJobs", false);
         ForsetiGateRouted[gate] = gateGroup->GetCounter("ForsetiRouted", true);
+        ForsetiGateEnqueuedCostNs[gate] = gateGroup->GetCounter("ForsetiEnqueuedCostNs", true);
+        ForsetiGateSelectedCostNs[gate] = gateGroup->GetCounter("ForsetiSelectedCostNs", true);
+        ForsetiGateAvailableBudgetNs[gate] = gateGroup->GetCounter("ForsetiAvailableBudgetNs", false);
+        ForsetiGateQueuedWeight[gate] = gateGroup->GetCounter("ForsetiQueuedWeight", false);
+        ForsetiGateEligibleChecks[gate] = gateGroup->GetCounter("ForsetiEligibleChecks", true);
+        ForsetiGateDepletedChecks[gate] = gateGroup->GetCounter("ForsetiDepletedChecks", true);
+        ForsetiGateSelectedJobs[gate] = gateGroup->GetCounter("ForsetiSelectedJobs", true);
+        ForsetiGateFallbackJobs[gate] = gateGroup->GetCounter("ForsetiFallbackJobs", true);
+        ForsetiGateReadDeviceEstimatedCostNs[gate] = gateGroup->GetCounter("ForsetiReadDeviceEstimatedCostNs", true);
+        ForsetiGateReadDeviceAttributedTimeNs[gate] = gateGroup->GetCounter("ForsetiReadDeviceAttributedTimeNs", true);
+        ForsetiGateReadDeviceBytes[gate] = gateGroup->GetCounter("ForsetiReadDeviceBytes", true);
+        ForsetiGateReadDeviceOps[gate] = gateGroup->GetCounter("ForsetiReadDeviceOps", true);
+        ForsetiGateReadDeviceUnestimatedOps[gate] = gateGroup->GetCounter("ForsetiReadDeviceUnestimatedOps", true);
+        ForsetiGateReadDeviceDuration[gate].Initialize(gateGroup, "forsetiReadDeviceDuration", deviceType);
+        ForsetiGateQueuedCostMs[gate] =
+            gateGroup->GetNamedHistogram("sensor", "forsetiQueuedCostMs", NMonitoring::ExplicitHistogram(queuedCostMsBounds));
+        ForsetiGateDepletedQueuedJobs[gate] =
+            gateGroup->GetNamedHistogram("sensor", "forsetiDepletedQueuedJobs", NMonitoring::ExplicitHistogram(queueDepthBounds));
     }
 
     TRACKER_INIT_IF_EXTENDED(LogQueueTime, logQueueTime, Time in millisec);

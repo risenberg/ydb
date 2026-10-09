@@ -290,9 +290,16 @@ void TCompletionChunkReadPart::Exec(TActorSystem *actorSystem) {
         return;
     }
 
+    const auto completionStart = HPNow();
+    PDisk->Mon.DeviceReadCompletionStartWait.Increment(HPMilliSecondsFloat(completionStart - GetTime));
+    PDisk->Mon.DeviceReadCompletionDispatchWait.Increment(HPMilliSecondsFloat(CompletionEnqueueTime - GetTime));
+    PDisk->Mon.DeviceReadCompletionQueueWait.Increment(HPMilliSecondsFloat(completionStart - CompletionEnqueueTime));
+    PDisk->Mon.DeviceReadCompletionQueueDepth->Collect(CompletionQueueDepthAtEnqueue);
     if (Read->ChunkEncrypted) {
         Span.Event("PDisk.CompletionChunkReadPart.DecryptionStart");
+        const auto decryptionStart = HPNow();
         UnencryptData(actorSystem);
+        PDisk->Mon.DeviceReadDecryptionDuration.Increment(HPMilliSecondsFloat(HPNow() - decryptionStart));
     }
 
     double deviceTimeMs = HPMilliSecondsFloat(GetTime - SubmitTime);
@@ -300,6 +307,7 @@ void TCompletionChunkReadPart::Exec(TActorSystem *actorSystem) {
     Read->Orbit.Join(Orbit);
     LWTRACK(PDiskChunkReadDeviceReadCompleted, Read->Orbit, PDisk->PCtx->PDiskId, Read->ReqId.Id, RawReadSize,
             deviceTimeMs, HPMilliSecondsFloat(HPNow() - GetTime));
+    CumulativeCompletion->RecordPartTimes(SubmitTime, GetTime, completionStart);
     CumulativeCompletion->PartReadComplete(actorSystem);
     CumulativeCompletion = nullptr;
 
@@ -383,8 +391,30 @@ void TCompletionChunkRead::Exec(TActorSystem *actorSystem) {
         {"resultString", result->ToString()},
         {"to", Read->Sender.LocalId()});
 
-    double responseTimeMs = HPMilliSecondsFloat(HPNow() - Read->CreationTime);
+    const auto responseTime = HPNow();
+    double responseTimeMs = HPMilliSecondsFloat(responseTime - Read->CreationTime);
     PDisk->Mon.IncrementResponseTime(Read->PriorityClass, responseTimeMs, Read->Size);
+    const auto firstSubmitTime = AtomicGet(FirstPartSubmitTime);
+    const auto lastDeviceDoneTime = AtomicGet(LastPartDeviceDoneTime);
+    const auto lastCompletionStartTime = AtomicGet(LastPartCompletionStartTime);
+    constexpr double SlowReadThresholdMs = 32.0;   // Upper bound of the 32 ms latency bucket.
+    if (GetDeviceReadCount() == 1) {
+        PDisk->Mon.SingleDeviceReadResponses->Inc();
+        if (responseTimeMs > SlowReadThresholdMs) {
+            PDisk->Mon.SlowSingleReadBeforeSubmit.Increment(HPMilliSecondsFloat(firstSubmitTime - Read->CreationTime));
+            PDisk->Mon.SlowSingleReadDevice.Increment(HPMilliSecondsFloat(lastDeviceDoneTime - firstSubmitTime));
+            PDisk->Mon.SlowSingleReadCompletionWait.Increment(HPMilliSecondsFloat(lastCompletionStartTime - lastDeviceDoneTime));
+            PDisk->Mon.SlowSingleReadAfterCompletionStart.Increment(HPMilliSecondsFloat(responseTime - lastCompletionStartTime));
+        }
+    } else {
+        PDisk->Mon.MultiDeviceReadResponses->Inc();
+        if (responseTimeMs > SlowReadThresholdMs) {
+            PDisk->Mon.SlowMultiReadBeforeSubmit.Increment(HPMilliSecondsFloat(firstSubmitTime - Read->CreationTime));
+            PDisk->Mon.SlowMultiReadDeviceWindow.Increment(HPMilliSecondsFloat(lastDeviceDoneTime - firstSubmitTime));
+            PDisk->Mon.SlowMultiReadCompletionWait.Increment(HPMilliSecondsFloat(lastCompletionStartTime - lastDeviceDoneTime));
+            PDisk->Mon.SlowMultiReadAfterCompletionStart.Increment(HPMilliSecondsFloat(responseTime - lastCompletionStartTime));
+        }
+    }
     LWTRACK(PDiskChunkReadSummary, Read->Orbit, PDisk->PCtx->PDiskId, Read->ReqId.Id, GetDeviceReadCount());
     LWTRACK(PDiskChunkResponseTime, Read->Orbit, PDisk->PCtx->PDiskId, Read->ReqId.Id, Read->PriorityClass, responseTimeMs,
             Read->Size);

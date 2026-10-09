@@ -139,6 +139,38 @@ private:
     TDuration WorkTime;
 };
 
+class TCompletionOrderProbe: public NPDisk::TCompletionAction {
+public:
+    TCompletionOrderProbe(TAtomic &completed, TAtomic &gateQueries, TAtomic &gateQueriesAfterCompletion)
+        : Completed(completed)
+        , GateQueries(gateQueries)
+        , GateQueriesAfterCompletion(gateQueriesAfterCompletion)
+    {
+        ShouldBeExecutedInCompletionThread = false;
+    }
+
+    std::optional<ui8> GetSchedulerGate() const override {
+        AtomicIncrement(GateQueries);
+        if (AtomicGet(Completed)) {
+            AtomicIncrement(GateQueriesAfterCompletion);
+        }
+        return NPDisk::GateFastRead;
+    }
+
+    void Exec(TActorSystem *) override {
+        AtomicIncrement(Completed);
+    }
+
+    void Release(TActorSystem *) override {
+        AtomicIncrement(Completed);
+    }
+
+private:
+    TAtomic &Completed;
+    TAtomic &GateQueries;
+    TAtomic &GateQueriesAfterCompletion;
+};
+
 void WaitForValue(TAtomic *counter, TDuration maxDuration, TAtomicBase expectedValue) {
     TInstant finishTime = TInstant::Now() + maxDuration;
     while (TInstant::Now() < finishTime) {
@@ -310,6 +342,27 @@ Y_UNIT_TEST_SUITE(TBlockDeviceTest) {
         Ctest << "Done" << Endl;
     }
     */
+
+    Y_UNIT_TEST(ReadCompletionMetricsBeforeActionExecution) {
+        const TIntrusivePtr<::NMonitoring::TDynamicCounters> counters = new ::NMonitoring::TDynamicCounters;
+        THolder<TPDiskMon> mon(new TPDiskMon(counters, 0, nullptr));
+        TTempDir tempDir;
+        TString path = CreateFile(tempDir().c_str(), 4_MB);
+        TActorSystemCreator creator;
+        THolder<IBlockDevice> device(CreateRealBlockDeviceWithDefaults(path, *mon, TDeviceMode::None, nullptr, creator.GetActorSystem()));
+        TAlignedData data(4_KB);
+        TAtomic completed = 0;
+        TAtomic gateQueries = 0;
+        TAtomic gateQueriesAfterCompletion = 0;
+        THolder<TCompletionOrderProbe> completion(new TCompletionOrderProbe(completed, gateQueries, gateQueriesAfterCompletion));
+
+        device->PreadAsync(data.Get(), data.Size(), 0, completion.Get(), TReqId(), nullptr);
+        WaitForValue(&completed, TDuration::Seconds(5), 1);
+        device.Destroy();
+
+        UNIT_ASSERT_VALUES_EQUAL(AtomicGet(gateQueries), 1);
+        UNIT_ASSERT_VALUES_EQUAL(AtomicGet(gateQueriesAfterCompletion), 0);
+    }
 }
 
 } // namespace NKikimr

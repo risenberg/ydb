@@ -184,6 +184,8 @@ private:
     const TCounterPtr SizeBytesInFlight;
     const TCounterPtr SizeBlobsInFlight;
     const TCounterPtr ReadRequests;
+    const TCounterPtr ReadRequestsFast;
+    const TCounterPtr ReadRequestsAsync;
     const TCounterPtr ReadsInQueue;
     const TCounterPtr MaxSizeBytes;
     const TCounterPtr StickyBytes;
@@ -234,6 +236,8 @@ public:
         , SizeBytesInFlight(counters->GetCounter("SizeBytesInFlight"))
         , SizeBlobsInFlight(counters->GetCounter("SizeBlobsInFlight"))
         , ReadRequests(counters->GetCounter("ReadRequests", true))
+        , ReadRequestsFast(counters->GetCounter("ReadRequestsFast", true))
+        , ReadRequestsAsync(counters->GetCounter("ReadRequestsAsync", true))
         , ReadsInQueue(counters->GetCounter("ReadsInQueue"))
         , MaxSizeBytes(counters->GetCounter("MaxSizeBytes"))
         , StickyBytes(counters->GetCounter("StickyBytes"))
@@ -529,6 +533,7 @@ private:
         SendToBSProxy(ctx, dsGroup, request.release(), cookie);
 
         ReadRequests->Inc();
+        (readClass == NKikimrBlobStorage::FastRead ? ReadRequestsFast : ReadRequestsAsync)->Inc();
     }
 
     static TInstant ReadDeadlineForVariant(TReadItem::EReadVariant variant, const TDuration readDeadline) {

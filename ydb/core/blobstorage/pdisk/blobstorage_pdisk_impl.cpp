@@ -3196,6 +3196,9 @@ void TPDisk::ProcessChunkReadQueue() {
     size_t processed = 0;
     size_t processedBytes = 0;
     double processedCostMs = 0;
+    if (initialSize) {
+        Mon.JointChunkReadDepthAtProcess->Collect(initialSize);
+    }
     while (JointChunkReads.size()) {
         auto req = std::move(JointChunkReads.front());
         JointChunkReads.pop();
@@ -3209,7 +3212,9 @@ void TPDisk::ProcessChunkReadQueue() {
         processedCostMs += piece->GetCostMs();
         Y_VERIFY_S(!piece->SelfPointer, PCtx->PDiskLogPrefix);
         TIntrusivePtr<TChunkRead> &read = piece->ChunkRead;
-        Mon.JointChunkReadsWait.Increment(HPMilliSecondsFloat(HPNow() - piece->ScheduleTime));
+        const double waitMs = HPMilliSecondsFloat(HPNow() - piece->ScheduleTime);
+        Mon.JointChunkReadsWait.Increment(waitMs);
+        Mon.JointChunkReadsWaitByGate[piece->GateId].Increment(waitMs);
         LWTRACK(PDiskChunkReadPieceDequeued, read->Orbit, PCtx->PDiskId, read->ReqId.Id,
                 piece->PieceCurrentSector * Format.SectorSize, HPMilliSecondsFloat(HPNow() - piece->ScheduleTime));
         TReqId reqId = read->ReqId;
@@ -3246,12 +3251,19 @@ void TPDisk::ProcessChunkReadQueue() {
                 {"chunkIdx", chunkIdx});
         }
 
-        ++processed;
         // prevent the thread from being stuck for long
         if (UseNoopSchedulerCached && processed >= Cfg->SchedulerCfg.MaxChunkReadsPerCycle
             && HPMilliSecondsFloat(HPNow() - start) > Cfg->SchedulerCfg.MaxChunkReadsDurationPerCycleMs) {
+            if (JointChunkReads.size()) {
+                Mon.JointChunkReadLimitWithBacklog->Inc();
+            }
             break;
         }
+    }
+    if (processed) {
+        Mon.JointChunkReadPiecesPerCycle->Collect(processed);
+        Mon.JointChunkReadPieces->Add(processed);
+        Mon.JointChunkReadCycle.Increment(HPMilliSecondsFloat(HPNow() - start));
     }
     LWTRACK(PDiskProcessChunkReadQueue, UpdateCycleOrbit, PCtx->PDiskId, initialSize, processed, processedBytes, processedCostMs);
 }
@@ -4445,6 +4457,7 @@ void TPDisk::AddJobToScheduler(TRequestBase *request, NSchLab::EJobKind jobKind)
             batch.AddToBatch(static_cast<TLogWrite*>(request));
             ui64 prevCost = job->Cost;
             job->Cost += request->Cost;
+            Mon.ForsetiGateEnqueuedCostNs[request->GateId]->Add(request->Cost);
 
             ForsetiTimeNs++;
             ForsetiScheduler.OnJobCostChange(cbs, job, ForsetiTimeNs, prevCost);
@@ -4466,6 +4479,7 @@ void TPDisk::AddJobToScheduler(TRequestBase *request, NSchLab::EJobKind jobKind)
     request->ForsetiEnqueueTime = HPNow();
     ForsetiTimeNs++;
     ForsetiScheduler.AddJob(cbs, job, request->Owner, request->GateId, ForsetiTimeNs);
+    Mon.ForsetiGateEnqueuedCostNs[request->GateId]->Add(job->Cost);
     Mon.ForsetiGateQueueDepth[request->GateId]->Collect(cbs->JobsSize);
     Mon.ForsetiGatePendingJobs[request->GateId]->Inc();
     YDB_LOG_P_LOG(PRI_DEBUG, "Add job to scheduler",
@@ -4510,6 +4524,8 @@ void TPDisk::RouteRequest(TRequestBase *request) {
             TChunkReadPiece *piece = static_cast<TChunkReadPiece*>(request);
             piece->ScheduleTime = HPNow();
             JointChunkReads.emplace(piece->SelfPointer.Get());
+            Mon.JointChunkReadEnqueuedByGate[piece->GateId]->Inc();
+            Mon.JointChunkReadDepthAtEnqueue->Collect(JointChunkReads.size());
             piece->SelfPointer.Reset();
             // FIXME(cthulhu): Unreserve() for TChunkReadPiece is called while processing to avoid requeueing issues
             break;
@@ -4755,6 +4771,7 @@ void TPDisk::GetJobsFromForsetti() {
             }
 
             RouteRequest(req);
+            Mon.ForsetiGateSelectedCostNs[req->GateId]->Add(job->Cost);
             ForsetiTimeNs += job->Cost;
             if (req->GetType() == ERequestType::RequestLogWrite) {
                 totalLogCost += job->Cost;
@@ -4774,6 +4791,31 @@ void TPDisk::GetJobsFromForsetti() {
         }
     }
     ui64 totalCost = totalLogCost + totalNonLogCost;
+    if (!ForsetiScheduler.IsEmpty()) {
+        Mon.ForsetiBackloggedBatchBudgetNs->Add(maxDuration);
+        Mon.ForsetiBackloggedBatchSelectedCostNs->Add(totalCost);
+        if (ForsetiTimeNs > virtualDeadline) {
+            Mon.ForsetiBatchLimitWithBacklog->Inc();
+        } else {
+            Mon.ForsetiNoEligibleJobWithBacklog->Inc();
+        }
+    }
+
+    std::array<NSchLab::TGateSchedulingStats, TPDiskMon::ForsetiGateCount> gateStats;
+    ForsetiScheduler.GetGateSchedulingStats(gateStats);
+    for (size_t gate = 0; gate < gateStats.size(); ++gate) {
+        const auto &stats = gateStats[gate];
+        Mon.ForsetiGateAvailableBudgetNs[gate]->Set(stats.AvailableBudgetNs);
+        Mon.ForsetiGateQueuedWeight[gate]->Set(stats.QueuedWeight);
+        Mon.ForsetiGateEligibleChecks[gate]->Set(stats.EligibleChecks);
+        Mon.ForsetiGateDepletedChecks[gate]->Set(stats.DepletedChecks);
+        Mon.ForsetiGateSelectedJobs[gate]->Set(stats.SelectedJobs);
+        Mon.ForsetiGateFallbackJobs[gate]->Set(stats.FallbackJobs);
+        if (stats.QueuedJobs) {
+            Mon.ForsetiGateQueuedCostMs[gate]->Collect(stats.QueuedCostNs / 1'000'000.0);
+            Mon.ForsetiGateDepletedQueuedJobs[gate]->Collect(stats.DepletedQueuedJobs);
+        }
+    }
     LWTRACK(PDiskForsetiCycle, UpdateCycleOrbit, PCtx->PDiskId, nowCycles, prevForsetiTimeNs, ForsetiPrevTimeNs, timeCorrection,
             realDuration, virtualDuration, ForsetiTimeNs, totalCost, virtualDeadline);
     LWTRACK(PDiskMilliBatchSize, UpdateCycleOrbit, PCtx->PDiskId, totalLogCost, totalNonLogCost, totalLogReqs, totalNonLogReqs);

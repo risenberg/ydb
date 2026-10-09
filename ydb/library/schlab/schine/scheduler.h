@@ -7,6 +7,7 @@
 #include <util/generic/vector.h>
 #include <util/generic/string.h>
 #include <util/random/fast.h>
+#include <span>
 
 namespace NKikimr {
 namespace NSchLab {
@@ -42,8 +43,21 @@ struct TOwnerRecord {
     TVector<TGateRecord> Gates;
 };
 
+struct TGateSchedulingStats {
+    ui64 QueuedJobs = 0;
+    ui64 QueuedCostNs = 0;
+    ui64 DepletedQueuedJobs = 0;
+    ui64 AvailableBudgetNs = 0;
+    ui64 QueuedWeight = 0;
+    ui64 EligibleChecks = 0;
+    ui64 DepletedChecks = 0;
+    ui64 SelectedJobs = 0;
+    ui64 FallbackJobs = 0;
+};
+
 class TScheduler {
     TVector<TCbs> Cbs;
+    TVector<TGateSchedulingStats> GateSelectionStats;
     TNameTable NameTable;
     ui64 TotalWeight = 0;
     ui32 FirstEmptyCbs = 0;
@@ -72,6 +86,7 @@ public:
     ui64 MakeNextJobId();
     void OnJobCostChange(TCbs *cbs, TIntrusivePtr<TJob> &job, ui64 timeNs, ui64 prevCost);
     TIntrusivePtr<TJob> SelectJob(ui64 timeNs);
+    void GetGateSchedulingStats(std::span<TGateSchedulingStats> stats) const;
     void UpdateTotalWeight();
     void EvaluateNextJob(ui64 cbsIdx, ui64 timeNs, bool doLogCbsUpdate);
     void CompleteJob(ui64 timeNs, TIntrusivePtr<TJob> &job);

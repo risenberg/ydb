@@ -398,8 +398,38 @@ struct TPDiskMon {
     std::array<NMonitoring::THistogramPtr, ForsetiGateCount> ForsetiGateQueueDepth;
     std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGatePendingJobs;
     std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateRouted;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateEnqueuedCostNs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateSelectedCostNs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateAvailableBudgetNs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateQueuedWeight;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateEligibleChecks;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateDepletedChecks;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateSelectedJobs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateFallbackJobs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateReadDeviceEstimatedCostNs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateReadDeviceAttributedTimeNs;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateReadDeviceBytes;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateReadDeviceOps;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> ForsetiGateReadDeviceUnestimatedOps;
+    std::array<TTimesHistogram, ForsetiGateCount> ForsetiGateReadDeviceDuration;
+    std::array<NMonitoring::THistogramPtr, ForsetiGateCount> ForsetiGateQueuedCostMs;
+    std::array<NMonitoring::THistogramPtr, ForsetiGateCount> ForsetiGateDepletedQueuedJobs;
+    ::NMonitoring::TDynamicCounters::TCounterPtr ForsetiBatchLimitWithBacklog;
+    ::NMonitoring::TDynamicCounters::TCounterPtr ForsetiNoEligibleJobWithBacklog;
+    ::NMonitoring::TDynamicCounters::TCounterPtr ForsetiBackloggedBatchBudgetNs;
+    ::NMonitoring::TDynamicCounters::TCounterPtr ForsetiBackloggedBatchSelectedCostNs;
     TTimesHistogram JointChunkReadsWait;
+    std::array<TTimesHistogram, ForsetiGateCount> JointChunkReadsWaitByGate;
+    std::array<::NMonitoring::TDynamicCounters::TCounterPtr, ForsetiGateCount> JointChunkReadEnqueuedByGate;
+    TTimesHistogram JointChunkReadCycle;
+    NMonitoring::THistogramPtr JointChunkReadDepthAtEnqueue;
+    NMonitoring::THistogramPtr JointChunkReadDepthAtProcess;
+    NMonitoring::THistogramPtr JointChunkReadPiecesPerCycle;
+    ::NMonitoring::TDynamicCounters::TCounterPtr JointChunkReadPieces;
+    ::NMonitoring::TDynamicCounters::TCounterPtr JointChunkReadLimitWithBacklog;
     TTimesHistogram SubmitQueueWait;
+    TTimesHistogram SubmitCallerBackpressureWait;
+    ::NMonitoring::TDynamicCounters::TCounterPtr SubmitCallerBackpressureWaitNs;
     TTimesHistogram DeviceSlotWait;
 
     // Update cycle time
@@ -407,6 +437,21 @@ struct TPDiskMon {
 
     // Device times
     TTimesHistogram DeviceReadDuration;
+    TTimesHistogram DeviceReadCompletionStartWait;
+    TTimesHistogram DeviceReadCompletionDispatchWait;
+    TTimesHistogram DeviceReadCompletionQueueWait;
+    TTimesHistogram SlowSingleReadBeforeSubmit;
+    TTimesHistogram SlowSingleReadDevice;
+    TTimesHistogram SlowSingleReadCompletionWait;
+    TTimesHistogram SlowSingleReadAfterCompletionStart;
+    TTimesHistogram SlowMultiReadBeforeSubmit;
+    TTimesHistogram SlowMultiReadDeviceWindow;
+    TTimesHistogram SlowMultiReadCompletionWait;
+    TTimesHistogram SlowMultiReadAfterCompletionStart;
+    ::NMonitoring::TDynamicCounters::TCounterPtr SingleDeviceReadResponses;
+    ::NMonitoring::TDynamicCounters::TCounterPtr MultiDeviceReadResponses;
+    NMonitoring::THistogramPtr DeviceReadCompletionQueueDepth;
+    TTimesHistogram DeviceReadDecryptionDuration;
     TTimesHistogram DeviceWriteDuration;
     TTimesHistogram DeviceTrimDuration;
     TTimesHistogram DeviceFlushDuration;

@@ -7,12 +7,16 @@
 #include <library/cpp/lwtrace/shuttle.h>
 #include <ydb/library/actors/wilson/wilson_span.h>
 
+#include <optional>
+
 namespace NKikimr::NPDisk {
 
 struct TCompletionAction {
     ui64 OperationIdx;
     NHPTimer::STime SubmitTime;
     NHPTimer::STime GetTime;
+    NHPTimer::STime CompletionEnqueueTime = 0;
+    ui32 CompletionQueueDepthAtEnqueue = 0;
     NHPTimer::STime SubmitQueueTime = 0;
     NHPTimer::STime DeviceSlotWaitStartTime = 0;
     TCompletionAction *FlushAction = nullptr;
@@ -53,6 +57,11 @@ public:
     virtual bool CanHandleResult() const {
         return Result == EIoResult::Ok;
     }
+
+    virtual std::optional<ui8> GetSchedulerGate() const {
+        return std::nullopt;
+    }
+
     virtual void Exec(TActorSystem *actorSystem) = 0;
     virtual void Release(TActorSystem *) = 0;
     virtual ~TCompletionAction() {}

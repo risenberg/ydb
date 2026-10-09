@@ -54,6 +54,9 @@ void TScheduler::AddCbs(ui8 ownerIdx, ui8 gateIdx, TCbs newCbs, ui64 timeNs) {
     if (gateIdx >= owner.Gates.size()) {
         owner.Gates.resize(gateIdx + 1);
     }
+    if (gateIdx >= GateSelectionStats.size()) {
+        GateSelectionStats.resize(gateIdx + 1);
+    }
     auto &gate = owner.Gates[gateIdx];
     Y_ABORT_UNLESS(gate.CbsIdx == TCbs::InvalidIdx,
         "AddCbs double call, ownerId# %" PRIu32 " gateIdx# %" PRIu32 " Marker# SCH01",
@@ -209,9 +212,11 @@ TIntrusivePtr<TJob> TScheduler::SelectJob(ui64 timeNs) {
                 if (cbs.State == CbsStateDepleted || cbs.State == CbsStateDepletedGrub) {
                     EvaluateNextJob(idx, timeNs, doLog);
                     if (cbs.State == CbsStateDepleted || cbs.State == CbsStateDepletedGrub) {
+                        GateSelectionStats[cbs.GateIdx].DepletedChecks++;
                         continue;
                     }
                 }
+                GateSelectionStats[cbs.GateIdx].EligibleChecks++;
                 if (doLog) {
                     log.Write(cbs.CbsIdx); // CbsIdx
                     log.Write((ui64)cbs.State); // CbsState
@@ -250,6 +255,7 @@ TIntrusivePtr<TJob> TScheduler::SelectJob(ui64 timeNs) {
 
     ui64 accountCbsIdx = TCbs::InvalidIdx;
 
+    const bool usedFallback = !bestJob;
     if (bestJob) {
         bestJob->State = JobStateRunning;
         Cbs[bestJob->CbsIdx].State = CbsStateRunning;
@@ -295,6 +301,12 @@ TIntrusivePtr<TJob> TScheduler::SelectJob(ui64 timeNs) {
         }
     }
 
+    auto &selectionStats = GateSelectionStats[Cbs[bestJob->CbsIdx].GateIdx];
+    selectionStats.SelectedJobs++;
+    if (usedFallback) {
+        selectionStats.FallbackJobs++;
+    }
+
     if (doLog) {
         log.Write(accountCbsIdx); // CbsIdx
         log.Write((ui64)CbsStateRunning);//Cbs[accountCbsIdx].State); // CbsState
@@ -304,6 +316,26 @@ TIntrusivePtr<TJob> TScheduler::SelectJob(ui64 timeNs) {
     }
 
     return bestJob;
+}
+
+void TScheduler::GetGateSchedulingStats(std::span<TGateSchedulingStats> stats) const {
+    for (size_t gateIdx = 0; gateIdx < stats.size(); ++gateIdx) {
+        stats[gateIdx] = gateIdx < GateSelectionStats.size() ? GateSelectionStats[gateIdx] : TGateSchedulingStats{};
+    }
+    for (const auto &cbs : Cbs) {
+        if (cbs.CbsIdx == TCbs::InvalidIdx || !cbs.JobsSize || cbs.GateIdx >= stats.size()) {
+            continue;
+        }
+        auto &gate = stats[cbs.GateIdx];
+        gate.QueuedJobs += cbs.JobsSize;
+        gate.QueuedCostNs += cbs.JobsCost;
+        gate.QueuedWeight += cbs.Weight;
+        if (cbs.State == CbsStateDepleted || cbs.State == CbsStateDepletedGrub) {
+            gate.DepletedQueuedJobs += cbs.JobsSize;
+        } else if (cbs.CurBudget > 0) {
+            gate.AvailableBudgetNs += cbs.CurBudget;
+        }
+    }
 }
 
 void TScheduler::UpdateTotalWeight() {

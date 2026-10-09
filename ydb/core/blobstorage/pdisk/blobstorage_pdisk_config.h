@@ -34,7 +34,7 @@ struct TPDiskSchedulerConfig {
     ui64 LoadWeight = LoadWeightDefault;
     ui64 LowReadWeight = LowWeightDefault;
 
-    size_t MaxChunkReadsPerCycle = 16;
+    size_t MaxChunkReadsPerCycle = 32;
     double MaxChunkReadsDurationPerCycleMs = 0.25;
     size_t MaxChunkWritesPerCycle = 8;
     double MaxChunkWritesDurationPerCycleMs = 1;

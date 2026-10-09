@@ -143,6 +143,7 @@ class TRealBlockDevice : public IBlockDevice {
             }
 
             if (!action->ShouldBeExecutedInCompletionThread || Threads.empty()) {
+                action->CompletionEnqueueTime = HPNow();
                 ExecuteActionInPlace(action);
                 return;
             }
@@ -170,10 +171,14 @@ class TRealBlockDevice : public IBlockDevice {
 
                 Y_VERIFY(min_it != Threads.end());
                 if (action->CanBeExecutedInAdditionalCompletionThread) {
+                    action->CompletionQueueDepthAtEnqueue = minQueueSize;
+                    action->CompletionEnqueueTime = HPNow();
                     (*min_it)->Schedule(action);
                 } else {
                     // actions which are supposed to be executed from single thread always will be executer in 0 thread
                     // scheduled here to pass MaxQueuedActions check above
+                    action->CompletionQueueDepthAtEnqueue = Threads[0]->GetQueuedActions();
+                    action->CompletionEnqueueTime = HPNow();
                     Threads[0]->Schedule(action);
                 }
 
@@ -231,7 +236,7 @@ class TRealBlockDevice : public IBlockDevice {
         TRealBlockDevice &Device;
         std::shared_ptr<TPDiskCtx> &PCtx;
         TCountedQueueOneOne<IAsyncIoOperation*, 4 << 10> OperationsToBeSubmit;
-        static constexpr TAtomicBase SubmitInFlightBytesMax = 1ull << 15;
+        static constexpr TAtomicBase SubmitInFlightBytesMax = 1ull << 23;
         TMutex SubmitMtx;
         TCondVar SubmitCondVar;
         TAtomicBlockCounter SubmitQuitCounter;
@@ -265,12 +270,14 @@ class TRealBlockDevice : public IBlockDevice {
             TCompletionAction *action = static_cast<TCompletionAction*>(op->GetCookie());
             action->SubmitQueueTime = HPNow();
             OperationsToBeSubmit.Push(op);
-            NHPTimer::STime start;
             if (AtomicGetAndAdd(SubmitInFlightBytes, size) > SubmitInFlightBytesMax) {
+                const auto start = HPNow();
                 TGuard<TMutex> guard(SubmitMtx);
-                start = HPNow();
                 while (AtomicGet(SubmitInFlightBytes) > SubmitInFlightBytesMax) {
                     if (SubmitCondVar.WaitT(SubmitMtx, TDuration::Seconds(1))) {
+                        const auto wait = HPNow() - start;
+                        Device.Mon.SubmitCallerBackpressureWait.Increment(HPMilliSecondsFloat(wait));
+                        Device.Mon.SubmitCallerBackpressureWaitNs->Add(HPNanoSeconds(wait));
                         return;
                     } else {
                         YDB_LOG_P_LOG(PRI_WARN, "Exceed 1 second deadline in SubmitThreadQueue",
@@ -282,6 +289,9 @@ class TRealBlockDevice : public IBlockDevice {
                             {"submitInFlightBytesMax", SubmitInFlightBytesMax});
                     }
                 }
+                const auto wait = HPNow() - start;
+                Device.Mon.SubmitCallerBackpressureWait.Increment(HPMilliSecondsFloat(wait));
+                Device.Mon.SubmitCallerBackpressureWaitNs->Add(HPNanoSeconds(wait));
             }
         }
 
@@ -528,6 +538,10 @@ class TRealBlockDevice : public IBlockDevice {
             NHPTimer::STime durationCycles = (eventGotAtCycle > startCycle) ? eventGotAtCycle - startCycle : 0;
             NHPTimer::STime totalExecutionCycles = durationCycles;
             NHPTimer::STime totalCostNs = completionAction->CostNs;
+            const NHPTimer::STime submitTime = completionAction->SubmitTime;
+            const NHPTimer::STime baseCostNs = completionAction->CostNs;
+            const std::optional<ui8> schedulerGate =
+                opSize && op->GetType() == IAsyncIoOperation::EType::PRead ? completionAction->GetSchedulerGate() : std::nullopt;
 
             bool isSeekExpected = (completionAction->SubmitTime
                 + (NHPTimer::STime)Device.SeekCostNs / (NHPTimer::STime)SeekCostNsToCyclesApproxDivisor
@@ -593,6 +607,20 @@ class TRealBlockDevice : public IBlockDevice {
             if (isSeekExpected) {
                 Device.Mon.DeviceExpectedSeeks->Inc();
                 totalCostNs += Device.SeekCostNs;
+            }
+
+            if (opSize && op->GetType() == IAsyncIoOperation::EType::PRead) {
+                if (schedulerGate && *schedulerGate < TPDiskMon::ForsetiGateCount) {
+                    Device.Mon.ForsetiGateReadDeviceBytes[*schedulerGate]->Add(opSize);
+                    Device.Mon.ForsetiGateReadDeviceOps[*schedulerGate]->Inc();
+                    Device.Mon.ForsetiGateReadDeviceDuration[*schedulerGate].Increment(HPMilliSecondsFloat(eventGotAtCycle - submitTime));
+                    if (baseCostNs) {
+                        Device.Mon.ForsetiGateReadDeviceEstimatedCostNs[*schedulerGate]->Add(totalCostNs);
+                        Device.Mon.ForsetiGateReadDeviceAttributedTimeNs[*schedulerGate]->Add(HPNanoSeconds(totalExecutionCycles));
+                    } else {
+                        Device.Mon.ForsetiGateReadDeviceUnestimatedOps[*schedulerGate]->Inc();
+                    }
+                }
             }
 
             Device.IoContext->DestroyAsyncIoOperation(op);
